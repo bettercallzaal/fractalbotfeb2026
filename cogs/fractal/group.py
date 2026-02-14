@@ -3,7 +3,7 @@ import logging
 import asyncio
 import random
 from typing import Optional, List, Dict
-from ...utils.web_integration import web_integration
+from utils.web_integration import web_integration
 
 class FractalGroup:
     """Core class for managing a fractal voting group"""
@@ -194,6 +194,9 @@ class FractalGroup:
 
         await self.thread.send(results_text)
 
+        # Generate onchain submit breakout link
+        await self._post_submit_breakout(final_ranking)
+
         # Notify web app that fractal is complete
         await web_integration.notify_fractal_complete(self)
 
@@ -230,3 +233,82 @@ class FractalGroup:
             del self.cog.active_groups[self.thread.id]
 
         self.logger.info(f"Fractal group '{self.thread.name}' completed")
+
+    async def _post_submit_breakout(self, final_ranking):
+        """Generate and post the zao.frapps.xyz submitBreakout link"""
+        try:
+            # Get wallet registry from the bot
+            registry = getattr(self.cog.bot, 'wallet_registry', None)
+            if not registry:
+                self.logger.warning("No wallet registry available - skipping submitBreakout link")
+                return
+
+            # Look up wallets for each ranked member
+            wallet_params = []
+            missing = []
+            ranked_wallets = []
+            for i, member in enumerate(final_ranking):
+                wallet = registry.lookup(member)
+                if wallet:
+                    wallet_params.append(f"vote{i+1}={wallet}")
+                    ranked_wallets.append((member, wallet))
+                else:
+                    missing.append(member.display_name)
+                    wallet_params.append(f"vote{i+1}=")
+                    ranked_wallets.append((member, None))
+
+            # Get group number from daily counter
+            guild_id = self.thread.guild.id
+            from datetime import datetime
+            today = datetime.now().strftime("%b %d, %Y")
+            group_number = 1
+            if hasattr(self.cog, 'daily_counters'):
+                counters = self.cog.daily_counters.get(guild_id, {})
+                group_number = counters.get(today, 1)
+
+            # Build the URL
+            base_url = "https://zao.frapps.xyz/submitBreakout"
+            params = f"groupnumber={group_number}&" + "&".join(wallet_params)
+            submit_url = f"{base_url}?{params}"
+
+            # Build rankings text
+            from config.config import RESPECT_POINTS
+            fibonacci = RESPECT_POINTS
+            rankings_lines = []
+            for i, (member, wallet) in enumerate(ranked_wallets):
+                respect = fibonacci[i] if i < len(fibonacci) else 0
+                short = f"`{wallet[:6]}...{wallet[-4:]}`" if wallet else "⚠️ missing"
+                rankings_lines.append(f"**{i+1}.** {member.mention} → {short} (+{respect} Respect)")
+
+            # Post the embed
+            embed = discord.Embed(
+                title="🗳️ Submit Results Onchain",
+                description=(
+                    "**Fractal complete! Now submit these rankings onchain to earn Respect.**\n\n"
+                    + "\n".join(rankings_lines)
+                ),
+                color=0x57F287,
+                url=submit_url
+            )
+
+            if missing:
+                embed.add_field(
+                    name="⚠️ Missing Wallets",
+                    value=f"{', '.join(missing)} — use `/register 0xYourAddress` to link",
+                    inline=False
+                )
+
+            embed.set_footer(text="ZAO Fractal • zao.frapps.xyz")
+
+            await self.thread.send(embed=embed)
+
+            # Post clickable call to action that everyone sees
+            mentions = " ".join([m.mention for m in self.members])
+            await self.thread.send(
+                f"🔗 **Go vote here to submit results onchain:**\n"
+                f"{submit_url}\n\n"
+                f"{mentions} — click the link above to confirm the breakout results!"
+            )
+
+        except Exception as e:
+            self.logger.error(f"Error generating submitBreakout link: {e}", exc_info=True)

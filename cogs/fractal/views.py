@@ -73,11 +73,12 @@ class ZAOFractalVotingView(discord.ui.View):
 
 class MemberConfirmationView(discord.ui.View):
     """A view for confirming fractal group members"""
-    def __init__(self, cog, members, facilitator):
+    def __init__(self, cog, members, facilitator, custom_name=None):
         super().__init__(timeout=60)
         self.cog = cog
         self.members = members
         self.facilitator = facilitator
+        self.custom_name = custom_name
         self.awaiting_modification = False
 
     @discord.ui.button(label="✅ Start Fractal", style=discord.ButtonStyle.success)
@@ -89,8 +90,11 @@ class MemberConfirmationView(discord.ui.View):
 
         await interaction.response.defer()
 
-        # Generate group name
-        group_name = self.cog._get_next_group_name(interaction.guild.id)
+        # Use custom name or generate one
+        if self.custom_name:
+            group_name = self.custom_name
+        else:
+            group_name = self.cog._get_next_group_name(interaction.guild.id)
 
         # Get the parent channel (in case we're in a thread)
         channel = interaction.channel

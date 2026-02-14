@@ -2,6 +2,9 @@
 Configuration parameters for the ZAO Fractal Bot
 """
 
+# Role-based Permissions
+SUPREME_ADMIN_ROLE_ID = 1142290553933938748
+
 # Fractal Settings
 MAX_GROUP_MEMBERS = 6
 MIN_GROUP_MEMBERS = 2
@@ -17,6 +20,9 @@ BUTTON_STYLES = [
     'danger',   # Red
     'secondary' # Gray
 ]
+
+# Respect Points (Year 2 = 2x Fibonacci)
+RESPECT_POINTS = [110, 68, 42, 26, 16, 10]
 
 # Thread Settings
 THREAD_PREFIX = "ZAO Fractal:"

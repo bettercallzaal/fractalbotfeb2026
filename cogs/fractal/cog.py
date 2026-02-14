@@ -40,7 +40,8 @@ class FractalCog(BaseCog):
         name="zaofractal",
         description="Create a new ZAO fractal voting group from your current voice channel"
     )
-    async def zaofractal(self, interaction: discord.Interaction):
+    @app_commands.describe(name="Custom name for this fractal group (optional)")
+    async def zaofractal(self, interaction: discord.Interaction, name: str = None):
         """Create a new ZAO fractal voting group from voice channel members"""
         # Check if interaction has already been responded to
         if interaction.response.is_done():
@@ -49,10 +50,8 @@ class FractalCog(BaseCog):
         try:
             await interaction.response.defer(ephemeral=True)
         except discord.NotFound:
-            # Interaction expired or invalid, try to send a regular message
             return
         except discord.InteractionResponded:
-            # Already responded, continue with followup
             pass
 
         # Check user's voice state
@@ -61,23 +60,24 @@ class FractalCog(BaseCog):
             try:
                 await interaction.followup.send(voice_check['message'], ephemeral=True)
             except:
-                # If followup fails, try regular channel message
                 await interaction.channel.send(f"{interaction.user.mention} {voice_check['message']}")
             return
 
         members = voice_check['members']
         member_mentions = ", ".join([member.mention for member in members])
 
+        # Store custom name for use in confirmation view
+        custom_name = name
+
         # Send member confirmation
-        view = MemberConfirmationView(self, members, interaction.user)
+        view = MemberConfirmationView(self, members, interaction.user, custom_name=custom_name)
         try:
             await interaction.followup.send(
-                f"**Start fractal with:** {member_mentions}?",
+                f"**Start fractal{f' ({custom_name})' if custom_name else ''} with:** {member_mentions}?",
                 view=view,
                 ephemeral=True
             )
         except:
-            # If followup fails, send to channel
             await interaction.channel.send(
                 f"{interaction.user.mention} **Start fractal with:** {member_mentions}?",
                 view=view
@@ -156,6 +156,52 @@ class FractalCog(BaseCog):
 
         await interaction.followup.send(status, ephemeral=True)
 
+    @app_commands.command(
+        name="groupwallets",
+        description="Show wallet addresses for all members in the current fractal group"
+    )
+    async def groupwallets(self, interaction: discord.Interaction):
+        """List wallet addresses for all members in the active fractal group"""
+        try:
+            await interaction.response.defer(ephemeral=True)
+        except discord.NotFound:
+            return
+        except discord.InteractionResponded:
+            pass
+
+        # Check if in a fractal thread
+        if not isinstance(interaction.channel, discord.Thread):
+            await interaction.followup.send("❌ Use this in a fractal group thread.", ephemeral=True)
+            return
+
+        group = self.active_groups.get(interaction.channel.id)
+        if not group:
+            await interaction.followup.send("❌ This thread is not an active fractal group.", ephemeral=True)
+            return
+
+        registry = getattr(self.bot, 'wallet_registry', None)
+        if not registry:
+            await interaction.followup.send("❌ Wallet registry not available.", ephemeral=True)
+            return
+
+        msg = f"# 🔗 Group Wallets\n\n"
+        missing = []
+        for member in group.members:
+            wallet = registry.lookup(member)
+            if wallet:
+                short = f"{wallet[:6]}...{wallet[-4:]}"
+                msg += f"✅ **{member.display_name}** → `{wallet}`\n"
+            else:
+                msg += f"❌ **{member.display_name}** → No wallet registered\n"
+                missing.append(member.display_name)
+
+        if missing:
+            msg += f"\n⚠️ **{len(missing)} member(s) missing wallets.** They can use `/register 0xAddress` to link."
+        else:
+            msg += f"\n✅ All {len(group.members)} members have wallets linked!"
+
+        await interaction.followup.send(msg, ephemeral=True)
+
     # Admin Commands
     @app_commands.command(
         name="admin_end_fractal",
@@ -166,8 +212,8 @@ class FractalCog(BaseCog):
         """Admin command to force end fractals"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         if thread_id:
@@ -203,8 +249,8 @@ class FractalCog(BaseCog):
         """Admin command to list all active fractals"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         if not self.active_groups:
@@ -231,8 +277,8 @@ class FractalCog(BaseCog):
         """Admin command to cleanup stuck fractals"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         cleaned_count = 0
@@ -268,8 +314,8 @@ class FractalCog(BaseCog):
         """Admin command to force move to next round"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -313,8 +359,8 @@ class FractalCog(BaseCog):
         """Admin command to reset votes in current round"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -345,8 +391,8 @@ class FractalCog(BaseCog):
         """Admin command to manually declare a winner"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -381,8 +427,8 @@ class FractalCog(BaseCog):
         """Admin command to add member to active fractal"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -425,8 +471,8 @@ class FractalCog(BaseCog):
         """Admin command to remove member from active fractal"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -469,8 +515,8 @@ class FractalCog(BaseCog):
         """Admin command to change facilitator"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -507,8 +553,8 @@ class FractalCog(BaseCog):
         """Admin command to pause fractal voting"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -547,8 +593,8 @@ class FractalCog(BaseCog):
         """Admin command to resume paused fractal"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -583,8 +629,8 @@ class FractalCog(BaseCog):
         """Admin command to restart fractal from beginning"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -625,8 +671,8 @@ class FractalCog(BaseCog):
         """Admin command to get detailed fractal stats"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -688,8 +734,8 @@ class FractalCog(BaseCog):
         """Admin command to get server-wide fractal stats"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
@@ -737,8 +783,8 @@ class FractalCog(BaseCog):
         """Admin command to export fractal data"""
         await interaction.response.defer(ephemeral=True)
 
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.followup.send("❌ You need administrator permissions to use this command.", ephemeral=True)
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
         try:
