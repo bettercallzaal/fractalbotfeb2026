@@ -71,32 +71,39 @@ class ZAOFractalVotingView(discord.ui.View):
         return vote_callback
 
 
-class MemberConfirmationView(discord.ui.View):
-    """A view for confirming fractal group members"""
-    def __init__(self, cog, members, facilitator, custom_name=None):
-        super().__init__(timeout=60)
-        self.cog = cog
-        self.members = members
-        self.facilitator = facilitator
-        self.custom_name = custom_name
-        self.awaiting_modification = False
+class FractalNameModal(discord.ui.Modal, title="Name Your Fractal"):
+    """Modal that asks for fractal number and group number before starting"""
 
-    @discord.ui.button(label="✅ Start Fractal", style=discord.ButtonStyle.success)
-    async def confirm_members(self, interaction: discord.Interaction, button: discord.ui.Button):
-        """Start the fractal with current members"""
-        if interaction.user != self.facilitator:
-            await interaction.response.send_message("Only the facilitator can start the fractal.", ephemeral=True)
-            return
+    fractal_number = discord.ui.TextInput(
+        label="Fractal Number",
+        placeholder="e.g. 5",
+        required=True,
+        max_length=10,
+        style=discord.TextStyle.short
+    )
+
+    group_number = discord.ui.TextInput(
+        label="Group Number",
+        placeholder="e.g. 2",
+        required=True,
+        max_length=10,
+        style=discord.TextStyle.short
+    )
+
+    def __init__(self, confirmation_view):
+        super().__init__()
+        self.confirmation_view = confirmation_view
+
+    async def on_submit(self, interaction: discord.Interaction):
+        """Called when the user submits the modal"""
+        fractal_num = self.fractal_number.value.strip()
+        group_num = self.group_number.value.strip()
+
+        group_name = f"Fractal {fractal_num} - Group {group_num}"
 
         await interaction.response.defer()
 
-        # Use custom name or generate one
-        if self.custom_name:
-            group_name = self.custom_name
-        else:
-            group_name = self.cog._get_next_group_name(interaction.guild.id)
-
-        # Get the parent channel (in case we're in a thread)
+        # Get the parent channel
         channel = interaction.channel
         if isinstance(channel, discord.Thread):
             channel = channel.parent
@@ -109,39 +116,64 @@ class MemberConfirmationView(discord.ui.View):
         )
 
         # Add all members to thread
-        for member in self.members:
+        for member in self.confirmation_view.members:
             try:
                 await thread.add_user(member)
             except discord.HTTPException:
-                pass  # Member might already be in thread or have permissions issues
+                pass
 
         # Create and start fractal group
         fractal_group = FractalGroup(
             thread=thread,
-            members=self.members,
-            facilitator=self.facilitator,
-            cog=self.cog
+            members=self.confirmation_view.members,
+            facilitator=self.confirmation_view.facilitator,
+            cog=self.confirmation_view.cog
         )
 
-        # Store active group
-        self.cog.active_groups[thread.id] = fractal_group
+        # Store the group number for submitBreakout URL
+        fractal_group.fractal_number = fractal_num
+        fractal_group.group_number = group_num
 
-        # Update original message first to avoid timeout
+        # Store active group
+        self.confirmation_view.cog.active_groups[thread.id] = fractal_group
+
+        # Update original message
         try:
             await interaction.edit_original_response(
-                content=f"✅ **Fractal started!** Check {thread.mention}",
+                content=f"✅ **{group_name} started!** Check {thread.mention}",
                 view=None
             )
         except:
-            pass  # Interaction might have timed out, but continue anyway
+            pass
 
-        # Start the fractal (this might take a moment)
+        # Start the fractal
         try:
             await fractal_group.start_fractal()
         except Exception as e:
-            # If fractal start fails, send error to thread
             await thread.send(f"❌ Error starting fractal: {str(e)}")
             raise
+
+
+class MemberConfirmationView(discord.ui.View):
+    """A view for confirming fractal group members"""
+    def __init__(self, cog, members, facilitator, custom_name=None):
+        super().__init__(timeout=120)
+        self.cog = cog
+        self.members = members
+        self.facilitator = facilitator
+        self.custom_name = custom_name
+        self.awaiting_modification = False
+
+    @discord.ui.button(label="✅ Start Fractal", style=discord.ButtonStyle.success)
+    async def confirm_members(self, interaction: discord.Interaction, button: discord.ui.Button):
+        """Open modal to name the fractal, then start it"""
+        if interaction.user != self.facilitator:
+            await interaction.response.send_message("Only the facilitator can start the fractal.", ephemeral=True)
+            return
+
+        # Show the naming modal
+        modal = FractalNameModal(self)
+        await interaction.response.send_modal(modal)
 
     @discord.ui.button(label="❌ Modify Members", style=discord.ButtonStyle.secondary)
     async def modify_members(self, interaction: discord.Interaction, button: discord.ui.Button):

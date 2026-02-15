@@ -200,7 +200,7 @@ class FractalGroup:
         # Notify web app that fractal is complete
         await web_integration.notify_fractal_complete(self)
 
-        # Post simple results to general channel
+        # Post results to general channel with embed
         try:
             # Find a general channel to post results
             general_channel = None
@@ -221,9 +221,51 @@ class FractalGroup:
                 )
 
             if general_channel:
-                simple_results = f"🏆 **{self.thread.name} Results:** "
-                simple_results += ", ".join([f"{i+1}. {winner.display_name}" for i, winner in enumerate(final_ranking)])
-                await general_channel.send(simple_results)
+                from config.config import RESPECT_POINTS
+                fibonacci = RESPECT_POINTS
+
+                # Build rankings with Respect points
+                rankings_lines = []
+                for i, winner in enumerate(final_ranking):
+                    medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else f"**{i+1}.**"
+                    respect = fibonacci[i] if i < len(fibonacci) else 0
+                    rankings_lines.append(f"{medal} {winner.mention}  —  **+{respect} Respect**")
+
+                # Build the submitBreakout URL for the embed
+                submit_url = None
+                registry = getattr(self.cog.bot, 'wallet_registry', None)
+                if registry:
+                    wallet_params = []
+                    for i, member in enumerate(final_ranking):
+                        wallet = registry.lookup(member)
+                        wallet_params.append(f"vote{i+1}={wallet if wallet else ''}")
+                    group_number = getattr(self, 'group_number', '1')
+                    submit_url = f"https://zao.frapps.xyz/submitBreakout?groupnumber={group_number}&{'&'.join(wallet_params)}"
+
+                embed = discord.Embed(
+                    title=f"🏆 {self.thread.name} — Results",
+                    description=(
+                        "**Final Rankings:**\n\n"
+                        + "\n".join(rankings_lines)
+                    ),
+                    color=0x57F287
+                )
+
+                if submit_url:
+                    embed.add_field(
+                        name="🗳️ Submit Results Onchain",
+                        value=f"**[Click here to vote and confirm results]({submit_url})**",
+                        inline=False
+                    )
+
+                embed.set_footer(text="ZAO Fractal • zao.frapps.xyz")
+
+                # Post embed + call to action with mentions
+                mentions = " ".join([m.mention for m in self.members])
+                await general_channel.send(
+                    content=f"🏆 **Fractal complete!** {mentions} — go vote to submit results onchain! 👇",
+                    embed=embed
+                )
 
         except Exception as e:
             self.logger.error(f"Failed to post results to general channel: {e}")
@@ -257,14 +299,8 @@ class FractalGroup:
                     wallet_params.append(f"vote{i+1}=")
                     ranked_wallets.append((member, None))
 
-            # Get group number from daily counter
-            guild_id = self.thread.guild.id
-            from datetime import datetime
-            today = datetime.now().strftime("%b %d, %Y")
-            group_number = 1
-            if hasattr(self.cog, 'daily_counters'):
-                counters = self.cog.daily_counters.get(guild_id, {})
-                group_number = counters.get(today, 1)
+            # Get group number from fractal group (set by modal) or fallback
+            group_number = getattr(self, 'group_number', '1')
 
             # Build the URL
             base_url = "https://zao.frapps.xyz/submitBreakout"

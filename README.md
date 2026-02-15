@@ -7,9 +7,9 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 ## How It Works
 
 1. **Group up** — 2-6 people join a voice channel
-2. **Start fractal** — Facilitator runs `/zaofractal` (optionally with a custom name)
+2. **Start fractal** — Facilitator runs `/zaofractal`, confirms members, then enters the fractal number and group number via a popup modal
 3. **Vote** — Members vote on who contributed most using button UI (Levels 6 → 1)
-4. **Results** — Bot posts final rankings with a clickable link to submit results onchain
+4. **Results** — Bot posts a rich embed to the general channel with final rankings, Respect points earned, and a one-click link to submit results onchain
 5. **Earn Respect** — Rankings are submitted to the ZAO Respect contract on Optimism via [zao.frapps.xyz](https://zao.frapps.xyz)
 
 ### Respect Points (Year 2 — 2x Fibonacci)
@@ -106,7 +106,7 @@ fractalbotfeb2026/
 - Python 3.10+
 - Discord bot token with Message Content, Members, and Guilds intents
 
-### Install & Run
+### Install & Run (Local)
 
 ```bash
 pip install -r requirements.txt
@@ -114,6 +114,14 @@ cp config/.env.template .env
 # Edit .env with your DISCORD_TOKEN
 python3 main.py
 ```
+
+### Deploy to Bot-Hosting.net
+
+1. Create a Discord bot server at [bot-hosting.net](https://bot-hosting.net)
+2. In the **Files** tab, upload all project files directly into `/home/container/` (no subfolders — `main.py` must be at the root)
+3. Upload your `.env` file separately with your bot token
+4. In the **Startup** tab, set **App py file** to `main.py`
+5. Hit **Start** — dependencies install automatically from `requirements.txt`
 
 ### Environment Variables
 
@@ -129,6 +137,27 @@ python3 main.py
 - **Respect Contract**: Soulbound ERC-1155 on Optimism via [ORDAO](https://optimismfractal.com/council)
 - **Submit UI**: [zao.frapps.xyz/submitBreakout](https://zao.frapps.xyz/submitBreakout)
 - **Toolkit**: [Optimystics/frapps](https://github.com/Optimystics/frapps)
+
+## Roadmap / Ideas
+
+### High Impact / Quick Wins
+- [ ] **Presentation timer** — Manage a speaking queue with countdown timer per person before voting begins
+- [ ] **Vote timeout** — Auto-advance or warn if a round goes too long without reaching threshold
+- [ ] **History tracking** — Log completed fractals to track cumulative Respect earned per member over time
+
+### UX Improvements
+- [ ] **Auto-split into groups** — For larger meetings (7+ people in voice), automatically split into balanced groups of 3-6
+- [ ] **Mid-fractal member handling** — Gracefully handle someone leaving voice/Discord mid-fractal (remove from candidates, adjust threshold)
+- [ ] **Facilitator rotation** — Track who's facilitated before and suggest/auto-assign facilitators fairly
+
+### Onchain / Web
+- [ ] **Transaction verification** — Listen for onchain tx after submitBreakout and confirm back in Discord
+- [ ] **Web dashboard** — Wire up the `web/` folder for live voting status, historical rankings, leaderboards
+- [ ] **Respect leaderboard** — `/leaderboard` command showing cumulative Respect earned across all fractals
+
+### Operational
+- [ ] **Scheduled fractals** — `/schedule` command for recurring weekly fractals with reminders
+- [ ] **Multi-group coordination** — "Fractal master" view showing status of all groups running in parallel during a meeting
 
 ## Links
 
