@@ -35,6 +35,7 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/groupwallets` | Show wallet addresses for all group members |
 | `/register <wallet>` | Link your Ethereum wallet for onchain Respect |
 | `/wallet` | Show your linked wallet |
+| `/guide` | Learn how ZAO Fractal works (with link to full web guide) |
 
 ### Supreme Admin Only
 
@@ -82,6 +83,7 @@ fractalbotfeb2026/
 │   └── .env.template          # Environment variable template
 ├── cogs/
 │   ├── base.py                # Shared utilities (voice check, role check)
+│   ├── guide.py               # /guide command with web guide link
 │   ├── wallet.py              # Wallet registration commands
 │   └── fractal/
 │       ├── __init__.py
@@ -94,8 +96,11 @@ fractalbotfeb2026/
 ├── data/
 │   ├── wallets.json           # Discord ID → wallet mappings
 │   └── names_to_wallets.json  # Name → wallet mappings (pre-loaded)
-└── web/                       # Next.js dashboard (optional)
-    ├── pages/                 # Dashboard UI + API routes
+└── web/                       # Next.js web app (Vercel)
+    ├── pages/
+    │   ├── index.tsx          # Dashboard UI
+    │   ├── guide.tsx          # Full guide / slide deck (public)
+    │   └── api/               # API routes + webhook
     ├── components/ui/         # Radix UI components
     └── utils/                 # Database schema (Drizzle + Neon)
 ```
