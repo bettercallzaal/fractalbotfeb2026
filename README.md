@@ -43,6 +43,9 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/leaderboard` | View the ZAO Respect leaderboard |
 | `/timer [minutes] [shuffle]` | Start a presentation timer for voice channel members |
 | `/timer_add [minutes]` | Add extra time to the current speaker |
+| `/history [query]` | Search completed fractals by member, group, or fractal number |
+| `/mystats [@user]` | View cumulative fractal stats and Respect earned |
+| `/rankings` | View cumulative Respect rankings from fractal history |
 
 ### Supreme Admin Only
 
@@ -101,6 +104,15 @@ Live onchain leaderboard at [zao-fractal.vercel.app/leaderboard](https://zao-fra
 - 5-minute server-side cache for fast responses
 - `/leaderboard` command in Discord links directly to the web page
 
+## Fractal History & Stats
+
+Every completed fractal is automatically logged to `data/history.json`:
+
+- **`/history [query]`** — Search past fractals by member name, group name, or fractal number
+- **`/mystats [@user]`** — View cumulative Respect earned, participation count, podium finishes, and recent fractals
+- **`/rankings`** — Cumulative Respect leaderboard from all recorded fractal history
+- Auto-records rankings, Respect points, facilitator, fractal/group number, and timestamp
+
 ## Presentation Timer
 
 Run `/timer` before voting to give each member structured speaking time:
@@ -145,6 +157,7 @@ fractalbotfeb2026/
 │   ├── guide.py               # /guide + /leaderboard commands
 │   ├── intro.py               # /intro command with cached #intros lookup
 │   ├── proposals.py           # Proposal voting system
+│   ├── history.py             # Fractal history tracking + search
 │   ├── timer.py               # Presentation timer with speaker queue
 │   ├── wallet.py              # Wallet + ENS registration commands
 │   └── fractal/
@@ -159,7 +172,8 @@ fractalbotfeb2026/
 │   ├── wallets.json           # Discord ID → wallet mappings
 │   ├── names_to_wallets.json  # Name → wallet mappings (pre-loaded)
 │   ├── intros.json            # Cached #intros channel messages
-│   └── proposals.json         # Proposal data + votes
+│   ├── proposals.json         # Proposal data + votes
+│   └── history.json           # Completed fractal results log
 └── web/                       # Next.js web app (Vercel)
     ├── pages/
     │   ├── index.tsx          # Dashboard UI
@@ -226,6 +240,7 @@ npm run dev
 
 ## Recently Shipped
 
+- [x] **Fractal history tracking** — `/history`, `/mystats`, `/rankings` with searchable log of all completed fractals
 - [x] **Presentation timer** — `/timer` manages a speaking queue with live countdown, skip/pause/resume controls
 - [x] **Introduction lookup** — `/intro @user` fetches and caches introductions from #intros channel
 - [x] **Proposal voting system** — `/propose` creates threaded proposals with Respect-weighted voting (OG + ZOR token-gated)
@@ -243,7 +258,6 @@ npm run dev
 
 ### High Impact / Quick Wins
 - [ ] **Vote timeout** — Auto-advance or warn if a round goes too long without reaching threshold
-- [ ] **History tracking** — Log completed fractals to track cumulative Respect earned per member over time
 
 ### UX Improvements
 - [ ] **Auto-split into groups** — For larger meetings (7+ people in voice), automatically split into balanced groups of 3-6

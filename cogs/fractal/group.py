@@ -258,6 +258,34 @@ class FractalGroup:
         # Notify web app that fractal is complete
         await web_integration.notify_fractal_complete(self)
 
+        # Record to fractal history
+        try:
+            history = getattr(self.cog.bot, 'fractal_history', None)
+            if history:
+                from config.config import RESPECT_POINTS
+                rankings_data = []
+                for i, member in enumerate(final_ranking):
+                    respect = RESPECT_POINTS[i] if i < len(RESPECT_POINTS) else 0
+                    rankings_data.append({
+                        'user_id': str(member.id),
+                        'display_name': member.display_name,
+                        'level': 6 - i,
+                        'respect': respect
+                    })
+                history.record(
+                    group_name=self.thread.name,
+                    facilitator_id=self.facilitator.id,
+                    facilitator_name=self.facilitator.display_name,
+                    fractal_number=getattr(self, 'fractal_number', ''),
+                    group_number=getattr(self, 'group_number', ''),
+                    guild_id=self.thread.guild.id,
+                    thread_id=self.thread.id,
+                    rankings=rankings_data
+                )
+                self.logger.info(f"Recorded fractal '{self.thread.name}' to history")
+        except Exception as e:
+            self.logger.error(f"Failed to record fractal history: {e}")
+
         # Post results to general channel with embed
         try:
             # Find a general channel to post results
