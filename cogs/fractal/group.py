@@ -2,8 +2,11 @@ import discord
 import logging
 import asyncio
 import random
+import os
 from typing import Optional, List, Dict
 from utils.web_integration import web_integration
+
+PING_SOUND = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'assets', 'ping.mp3')
 
 class FractalGroup:
     """Core class for managing a fractal voting group"""
@@ -19,6 +22,7 @@ class FractalGroup:
         self.current_level = 6  # Start at level 6
         self.current_voting_message = None
         self.cog = cog
+        self.voice_channel = None  # Set by FractalNameModal after creation
         self.logger = logging.getLogger('bot')
 
         self.logger.info(f"Created fractal group '{thread.name}' with facilitator {facilitator.display_name} and {len(members)} members")
@@ -100,6 +104,9 @@ class FractalGroup:
             message = await self.thread.send(voting_message, view=view)
             self.current_voting_message = message
 
+            # Notify voice channel with link + audio ping
+            await self.notify_voice_channel()
+
         except Exception as e:
             self.logger.error(f"Error creating voting UI: {e}", exc_info=True)
             await self.thread.send("❌ Error setting up voting buttons. Please try again.")
@@ -107,6 +114,57 @@ class FractalGroup:
     def get_vote_threshold(self):
         """Calculate votes needed to win (50% or more)"""
         return max(1, len(self.members) // 2 + len(self.members) % 2)  # Ceiling division
+
+    async def notify_voice_channel(self):
+        """Send a link to the voting thread in the voice channel text chat and play a ping sound"""
+        if not self.voice_channel:
+            return
+
+        # Send thread link to voice channel text chat
+        try:
+            await self.voice_channel.send(
+                f"🗳️ **Level {self.current_level} voting is live!** "
+                f"Vote here → {self.thread.mention}"
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to send voice channel notification: {e}")
+
+        # Play audio ping in voice channel
+        try:
+            if not os.path.exists(PING_SOUND):
+                self.logger.warning(f"Ping sound not found at {PING_SOUND}")
+                return
+
+            guild = self.thread.guild
+            voice_client = guild.voice_client
+
+            # Connect if not already connected
+            if not voice_client:
+                voice_client = await self.voice_channel.connect()
+            elif voice_client.channel != self.voice_channel:
+                await voice_client.move_to(self.voice_channel)
+
+            # Play the ping sound
+            if voice_client.is_playing():
+                voice_client.stop()
+
+            voice_client.play(
+                discord.FFmpegPCMAudio(PING_SOUND),
+                after=lambda e: asyncio.run_coroutine_threadsafe(
+                    self._disconnect_after_ping(voice_client), self.cog.bot.loop
+                )
+            )
+        except Exception as e:
+            self.logger.error(f"Failed to play audio ping: {e}")
+
+    async def _disconnect_after_ping(self, voice_client):
+        """Disconnect from voice after the ping finishes"""
+        await asyncio.sleep(1)
+        try:
+            if voice_client and voice_client.is_connected():
+                await voice_client.disconnect()
+        except Exception:
+            pass
 
     async def process_vote(self, voter: discord.Member, candidate: discord.Member):
         """Process a vote and announce it publicly"""

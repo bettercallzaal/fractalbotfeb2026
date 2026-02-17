@@ -5,6 +5,7 @@ import logging
 import json
 import os
 import re
+import aiohttp
 from config.config import SUPREME_ADMIN_ROLE_ID
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
@@ -15,6 +16,101 @@ NAMES_FILE = os.path.join(DATA_DIR, 'names_to_wallets.json')
 def is_valid_address(address: str) -> bool:
     """Validate Ethereum address format"""
     return bool(re.match(r'^0x[0-9a-fA-F]{40}$', address))
+
+
+def is_ens_name(name: str) -> bool:
+    """Check if a string looks like an ENS name"""
+    return bool(re.match(r'^[a-zA-Z0-9\-]+\.eth$', name.strip()))
+
+
+async def resolve_ens(name: str) -> str | None:
+    """Resolve an ENS name to an Ethereum address using Cloudflare ETH gateway"""
+    try:
+        async with aiohttp.ClientSession() as session:
+            # Use Cloudflare's public Ethereum RPC
+            payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_call",
+                "params": [{
+                    # ENS registry: resolver(namehash)
+                    "to": "0x231b0Ee14048e9dCcD1d247744d114a4EB5E8E63",  # ENS Universal Resolver
+                    "data": _encode_resolve(name)
+                }, "latest"]
+            }
+            async with session.post("https://cloudflare-eth.com", json=payload) as resp:
+                data = await resp.json()
+                result = data.get("result", "0x")
+                if result and result != "0x" and len(result) >= 66:
+                    # Extract address from response (last 20 bytes of first 32-byte word)
+                    address = "0x" + result[26:66]
+                    if is_valid_address(address) and address != "0x0000000000000000000000000000000000000000":
+                        return address
+
+        # Fallback: use ensdata.net API
+        async with aiohttp.ClientSession() as session:
+            async with session.get(f"https://api.ensdata.net/{name}") as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    address = data.get("address")
+                    if address and is_valid_address(address):
+                        return address
+    except Exception as e:
+        logging.getLogger('bot').error(f"ENS resolution failed for {name}: {e}")
+
+    return None
+
+
+def _encode_resolve(name: str) -> str:
+    """Encode ENS name for the universal resolver's resolve(bytes,bytes) call"""
+    import hashlib
+
+    # DNS-encode the name
+    dns_encoded = b""
+    for label in name.split("."):
+        encoded_label = label.encode("utf-8")
+        dns_encoded += bytes([len(encoded_label)]) + encoded_label
+    dns_encoded += b"\x00"
+
+    # addr(bytes32) selector = 0x3b3b57de + namehash
+    namehash = _namehash(name)
+    inner_data = bytes.fromhex("3b3b57de") + bytes.fromhex(namehash[2:])
+
+    # resolve(bytes,bytes) selector = 0x9061b923
+    selector = "9061b923"
+
+    # ABI encode: offset to dns_name, offset to inner_data, then the data
+    # offset to dns_name = 64 (0x40)
+    # offset to inner_data = 64 + 32 + ceil(len(dns)/32)*32
+    dns_padded_len = ((len(dns_encoded) + 31) // 32) * 32
+    inner_padded_len = ((len(inner_data) + 31) // 32) * 32
+
+    offset1 = 64  # offset to first bytes param
+    offset2 = offset1 + 32 + dns_padded_len  # offset to second bytes param
+
+    result = selector
+    result += offset1.to_bytes(32, "big").hex()
+    result += offset2.to_bytes(32, "big").hex()
+    # dns_encoded bytes
+    result += len(dns_encoded).to_bytes(32, "big").hex()
+    result += dns_encoded.hex().ljust(dns_padded_len * 2, "0")
+    # inner_data bytes
+    result += len(inner_data).to_bytes(32, "big").hex()
+    result += inner_data.hex().ljust(inner_padded_len * 2, "0")
+
+    return "0x" + result
+
+
+def _namehash(name: str) -> str:
+    """Compute ENS namehash"""
+    import hashlib
+    node = b"\x00" * 32
+    if name:
+        labels = name.split(".")
+        for label in reversed(labels):
+            label_hash = hashlib.sha3_256(label.encode("utf-8")).digest()
+            node = hashlib.sha3_256(node + label_hash).digest()
+    return "0x" + node.hex()
 
 
 class WalletRegistry:
@@ -127,17 +223,38 @@ class WalletCog(commands.Cog):
 
     @app_commands.command(
         name="register",
-        description="Register your Ethereum wallet address for onchain Respect"
+        description="Register your Ethereum wallet or ENS name for onchain Respect"
     )
-    @app_commands.describe(wallet="Your Ethereum wallet address (0x...)")
+    @app_commands.describe(wallet="Your Ethereum wallet address (0x...) or ENS name (e.g. vitalik.eth)")
     async def register(self, interaction: discord.Interaction, wallet: str):
-        """Register your wallet address"""
+        """Register your wallet address or ENS name"""
         await interaction.response.defer(ephemeral=True)
 
         wallet = wallet.strip()
+
+        # Check if it's an ENS name
+        if is_ens_name(wallet):
+            ens_name = wallet
+            resolved = await resolve_ens(ens_name)
+            if not resolved:
+                await interaction.followup.send(
+                    f"❌ Could not resolve ENS name `{ens_name}`. Make sure it exists and has an address set.",
+                    ephemeral=True
+                )
+                return
+            wallet = resolved
+            short = f"{wallet[:6]}...{wallet[-4:]}"
+            self.registry.register(interaction.user.id, wallet)
+            await interaction.followup.send(
+                f"✅ ENS `{ens_name}` resolved and registered: `{short}`\n"
+                f"Your fractal results will now link to this address for onchain submission.",
+                ephemeral=True
+            )
+            return
+
         if not is_valid_address(wallet):
             await interaction.followup.send(
-                "❌ Invalid wallet address. Must be `0x` followed by 40 hex characters.",
+                "❌ Invalid input. Provide a wallet address (`0x...`) or an ENS name (`name.eth`).",
                 ephemeral=True
             )
             return
@@ -173,11 +290,11 @@ class WalletCog(commands.Cog):
 
     @app_commands.command(
         name="admin_register",
-        description="[ADMIN] Register a wallet for another user"
+        description="[ADMIN] Register a wallet or ENS for another user"
     )
-    @app_commands.describe(user="Discord user", wallet="Their Ethereum wallet address")
+    @app_commands.describe(user="Discord user", wallet="Their Ethereum wallet address or ENS name")
     async def admin_register(self, interaction: discord.Interaction, user: discord.Member, wallet: str):
-        """Admin: register wallet for another user"""
+        """Admin: register wallet or ENS for another user"""
         await interaction.response.defer(ephemeral=True)
 
         if not self.is_supreme_admin(interaction.user):
@@ -185,8 +302,24 @@ class WalletCog(commands.Cog):
             return
 
         wallet = wallet.strip()
+
+        if is_ens_name(wallet):
+            ens_name = wallet
+            resolved = await resolve_ens(ens_name)
+            if not resolved:
+                await interaction.followup.send(f"❌ Could not resolve ENS name `{ens_name}`.", ephemeral=True)
+                return
+            wallet = resolved
+            short = f"{wallet[:6]}...{wallet[-4:]}"
+            self.registry.register(user.id, wallet)
+            await interaction.followup.send(
+                f"✅ ENS `{ens_name}` resolved → `{short}` registered for {user.mention}",
+                ephemeral=True
+            )
+            return
+
         if not is_valid_address(wallet):
-            await interaction.followup.send("❌ Invalid wallet address format.", ephemeral=True)
+            await interaction.followup.send("❌ Invalid input. Provide a wallet address (`0x...`) or ENS name (`name.eth`).", ephemeral=True)
             return
 
         self.registry.register(user.id, wallet)

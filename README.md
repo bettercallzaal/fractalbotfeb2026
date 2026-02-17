@@ -8,7 +8,7 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 
 1. **Group up** — 2-6 people join a voice channel
 2. **Start fractal** — Facilitator runs `/zaofractal`, confirms members, then enters the fractal number and group number via a popup modal
-3. **Vote** — Members vote on who contributed most using button UI (Levels 6 → 1)
+3. **Vote** — Members vote on who contributed most using colored button UI (Levels 6 → 1). Each round, the bot joins voice to play an audio ping and posts a voting link in the voice channel text chat.
 4. **Results** — Bot posts a rich embed to the general channel with final rankings, Respect points earned, and a one-click link to submit results onchain
 5. **Earn Respect** — Rankings are submitted to the ZAO Respect contract on Optimism via [zao.frapps.xyz](https://zao.frapps.xyz)
 
@@ -33,7 +33,7 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/endgroup` | End your fractal (facilitator only) |
 | `/status` | Check fractal status (use in fractal thread) |
 | `/groupwallets` | Show wallet addresses for all group members |
-| `/register <wallet>` | Link your Ethereum wallet for onchain Respect |
+| `/register <wallet or ENS>` | Link your Ethereum wallet or ENS name (e.g. `vitalik.eth`) |
 | `/wallet` | Show your linked wallet |
 | `/guide` | Learn how ZAO Fractal works (with link to full web guide) |
 
@@ -41,7 +41,7 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 
 | Command | Description |
 |---------|-------------|
-| `/admin_register <user> <wallet>` | Register wallet for another user |
+| `/admin_register <user> <wallet or ENS>` | Register wallet or ENS for another user |
 | `/admin_wallets` | List all wallet registrations + stats |
 | `/admin_lookup <user>` | Look up a user's wallet |
 | `/admin_match_all` | Auto-match server members to wallets by display name |
@@ -65,12 +65,18 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 
 The bot maps Discord users to Ethereum wallet addresses for onchain submission:
 
-- **`/register`** — Users self-register their wallet
+- **`/register`** — Users self-register their wallet address or ENS name (e.g. `vitalik.eth` → auto-resolves to `0x...`)
 - **Name matching** — 130+ pre-loaded name→wallet mappings in `data/names_to_wallets.json` auto-match by Discord display name
-- **Admin override** — Admins can register wallets for any user with `/admin_register`
+- **Admin override** — Admins can register wallets or ENS names for any user with `/admin_register`
 - **`/admin_match_all`** — Shows which server members already have wallets matched
 
 When a fractal completes, the bot generates a pre-filled `zao.frapps.xyz/submitBreakout` link with all ranked wallet addresses and @mentions everyone to go vote.
+
+## Voice Channel Notifications
+
+Each voting round, the bot:
+- **Sends a link** to the voting thread in the voice channel's text chat so members can click through
+- **Plays an audio ping** by joining the voice channel, playing a short ding sound, then disconnecting
 
 ## Project Structure
 
@@ -81,15 +87,17 @@ fractalbotfeb2026/
 ├── config/
 │   ├── config.py              # Settings (roles, levels, respect points)
 │   └── .env.template          # Environment variable template
+├── assets/
+│   └── ping.mp3               # Audio notification for voting rounds
 ├── cogs/
 │   ├── base.py                # Shared utilities (voice check, role check)
 │   ├── guide.py               # /guide command with web guide link
-│   ├── wallet.py              # Wallet registration commands
+│   ├── wallet.py              # Wallet + ENS registration commands
 │   └── fractal/
 │       ├── __init__.py
-│       ├── cog.py             # Slash commands (25 total)
-│       ├── group.py           # Core voting logic + submitBreakout URL
-│       └── views.py           # Discord button UIs
+│       ├── cog.py             # Slash commands (26 total)
+│       ├── group.py           # Core voting logic + voice notifications
+│       └── views.py           # Discord button UIs + naming modal
 ├── utils/
 │   ├── logging.py             # Color-coded logging
 │   └── web_integration.py     # Webhook notifications to web dashboard
@@ -110,6 +118,7 @@ fractalbotfeb2026/
 ### Requirements
 - Python 3.10+
 - Discord bot token with Message Content, Members, and Guilds intents
+- ffmpeg (for voice channel audio pings) — `brew install ffmpeg` on macOS
 
 ### Install & Run (Local)
 
@@ -142,6 +151,17 @@ python3 main.py
 - **Respect Contract**: Soulbound ERC-1155 on Optimism via [ORDAO](https://optimismfractal.com/council)
 - **Submit UI**: [zao.frapps.xyz/submitBreakout](https://zao.frapps.xyz/submitBreakout)
 - **Toolkit**: [Optimystics/frapps](https://github.com/Optimystics/frapps)
+
+## Recently Shipped
+
+- [x] **ENS name registration** — `/register vitalik.eth` resolves and stores the address automatically
+- [x] **Voice channel audio ping** — Bot joins voice and plays a ding each voting round
+- [x] **Voice channel thread link** — Auto-posts voting thread link in voice channel text chat
+- [x] **Fractal naming modal** — Popup asks for fractal number + group number before starting
+- [x] **Rich embed results** — Results posted as embed with Respect points + one-click submit link
+- [x] **`/guide` command + web slide deck** — Quick explainer in Discord + full guide at `/guide` on web
+- [x] **No grey buttons** — Voting buttons cycle blue/green/red only
+- [x] **Bot-Hosting.net deployment** — Documented deployment to Pterodactyl-based hosting
 
 ## Roadmap / Ideas
 

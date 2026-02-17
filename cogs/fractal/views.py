@@ -19,12 +19,11 @@ class ZAOFractalVotingView(discord.ui.View):
         # Clear any existing buttons
         self.clear_items()
 
-        # List of button styles to cycle through
+        # List of button styles to cycle through (no grey)
         styles = [
             discord.ButtonStyle.primary,    # Blue
             discord.ButtonStyle.success,    # Green
             discord.ButtonStyle.danger,     # Red
-            discord.ButtonStyle.secondary   # Grey
         ]
 
         # Create a button for each candidate
@@ -133,6 +132,10 @@ class FractalNameModal(discord.ui.Modal, title="Name Your Fractal"):
         # Store the group number for submitBreakout URL
         fractal_group.fractal_number = fractal_num
         fractal_group.group_number = group_num
+
+        # Store the voice channel for notifications
+        if self.confirmation_view.facilitator.voice and self.confirmation_view.facilitator.voice.channel:
+            fractal_group.voice_channel = self.confirmation_view.facilitator.voice.channel
 
         # Store active group
         self.confirmation_view.cog.active_groups[thread.id] = fractal_group
