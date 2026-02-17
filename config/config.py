@@ -26,3 +26,10 @@ RESPECT_POINTS = [110, 68, 42, 26, 16, 10]
 
 # Thread Settings
 THREAD_PREFIX = "ZAO Fractal:"
+
+# Channel IDs
+INTROS_CHANNEL_ID = 1145135336477950053
+
+# Proposal Settings
+PROPOSAL_TYPES = ['text', 'governance', 'funding']
+MAX_PROPOSAL_OPTIONS = 5

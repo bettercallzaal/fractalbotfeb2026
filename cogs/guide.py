@@ -58,6 +58,38 @@ class GuideCog(BaseCog):
 
         await interaction.response.send_message(embed=embed)
 
+    @app_commands.command(
+        name="leaderboard",
+        description="View the ZAO Respect leaderboard"
+    )
+    async def leaderboard(self, interaction: discord.Interaction):
+        """Post a link to the Respect leaderboard"""
+        embed = discord.Embed(
+            title="Respect Leaderboard",
+            description=(
+                "View live onchain Respect rankings for all ZAO members.\n\n"
+                "The leaderboard pulls OG Respect (ERC-20) and ZOR Respect (ERC-1155) "
+                "balances directly from Optimism."
+            ),
+            color=0x57F287
+        )
+        embed.add_field(
+            name="View Leaderboard",
+            value="**[Open Leaderboard](https://zao-fractal.vercel.app/leaderboard)**",
+            inline=False
+        )
+        embed.add_field(
+            name="Contracts",
+            value=(
+                "OG Respect: `0x34cE...6957`\n"
+                "ZOR Respect: `0x9885...E7445c`"
+            ),
+            inline=False
+        )
+        embed.set_footer(text="ZAO Fractal \u2022 zao.frapps.xyz")
+
+        await interaction.response.send_message(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(GuideCog(bot))

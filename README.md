@@ -36,6 +36,11 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/register <wallet or ENS>` | Link your Ethereum wallet or ENS name (e.g. `vitalik.eth`) |
 | `/wallet` | Show your linked wallet |
 | `/guide` | Learn how ZAO Fractal works (with link to full web guide) |
+| `/intro <@user>` | Look up a member's introduction from #intros |
+| `/propose <title> <description> [type] [amount]` | Create a proposal for community voting |
+| `/proposals` | List all active proposals |
+| `/proposal <id>` | View details and vote breakdown for a proposal |
+| `/leaderboard` | View the ZAO Respect leaderboard |
 
 ### Supreme Admin Only
 
@@ -45,6 +50,9 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/admin_wallets` | List all wallet registrations + stats |
 | `/admin_lookup <user>` | Look up a user's wallet |
 | `/admin_match_all` | Auto-match server members to wallets by display name |
+| `/admin_refresh_intros` | Rebuild intro cache from #intros channel history |
+| `/admin_close_proposal <id>` | Close voting on a proposal and post results |
+| `/admin_delete_proposal <id>` | Delete a proposal entirely |
 | `/admin_end_fractal [thread_id]` | Force end any fractal |
 | `/admin_list_fractals` | List all active fractals |
 | `/admin_cleanup` | Clean up stuck/old fractals |
@@ -60,6 +68,36 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/admin_fractal_stats <thread_id>` | Detailed stats for a fractal |
 | `/admin_server_stats` | Server-wide fractal statistics |
 | `/admin_export_data [thread_id]` | Export fractal data as JSON file |
+
+## Introduction Lookup
+
+The `/intro` command lets anyone look up a member's introduction from the #intros channel:
+
+- **Cached** — Intros are fetched once from channel history and cached in `data/intros.json`
+- **Rich embed** — Shows intro text, link to their [thezao.com](https://thezao.com) community page, and wallet address if registered
+- **Admin refresh** — `/admin_refresh_intros` rebuilds the entire cache from channel history
+
+## Proposal System
+
+Community proposals with threaded discussion and voting:
+
+- **`/propose`** — Create a proposal (Text, Governance, or Funding type)
+  - **Text/Funding** — Yes / No / Abstain voting buttons
+  - **Governance** — Custom options entered via modal (up to 5 choices)
+  - Each proposal gets its own discussion thread
+- **Persistent votes** — Voting buttons survive bot restarts
+- **Respect-weighted** — Vote power = your total onchain Respect (OG + ZOR). Must hold Respect tokens and have a registered wallet to vote.
+- **Admin controls** — Close voting to post final results, or delete proposals entirely
+
+## Respect Leaderboard
+
+Live onchain leaderboard at [zao-fractal.vercel.app/leaderboard](https://zao-fractal.vercel.app/leaderboard):
+
+- Queries OG Respect (ERC-20) and ZOR Respect (ERC-1155) balances from Optimism
+- Uses Multicall3 for efficient batch queries across 130+ member wallets
+- Searchable, sortable table with top-3 medal highlights
+- 5-minute server-side cache for fast responses
+- `/leaderboard` command in Discord links directly to the web page
 
 ## Wallet System
 
@@ -85,13 +123,15 @@ fractalbotfeb2026/
 ├── main.py                    # Bot entry point
 ├── requirements.txt           # Python dependencies
 ├── config/
-│   ├── config.py              # Settings (roles, levels, respect points)
+│   ├── config.py              # Settings (roles, levels, respect points, channels)
 │   └── .env.template          # Environment variable template
 ├── assets/
 │   └── ping.mp3               # Audio notification for voting rounds
 ├── cogs/
 │   ├── base.py                # Shared utilities (voice check, role check)
-│   ├── guide.py               # /guide command with web guide link
+│   ├── guide.py               # /guide + /leaderboard commands
+│   ├── intro.py               # /intro command with cached #intros lookup
+│   ├── proposals.py           # Proposal voting system
 │   ├── wallet.py              # Wallet + ENS registration commands
 │   └── fractal/
 │       ├── __init__.py
@@ -103,12 +143,17 @@ fractalbotfeb2026/
 │   └── web_integration.py     # Webhook notifications to web dashboard
 ├── data/
 │   ├── wallets.json           # Discord ID → wallet mappings
-│   └── names_to_wallets.json  # Name → wallet mappings (pre-loaded)
+│   ├── names_to_wallets.json  # Name → wallet mappings (pre-loaded)
+│   ├── intros.json            # Cached #intros channel messages
+│   └── proposals.json         # Proposal data + votes
 └── web/                       # Next.js web app (Vercel)
     ├── pages/
     │   ├── index.tsx          # Dashboard UI
     │   ├── guide.tsx          # Full guide / slide deck (public)
-    │   └── api/               # API routes + webhook
+    │   ├── leaderboard.tsx    # Respect leaderboard (public)
+    │   └── api/
+    │       ├── leaderboard.ts # Onchain balance API (Multicall3 + ethers)
+    │       └── ...            # Auth + webhook routes
     ├── components/ui/         # Radix UI components
     └── utils/                 # Database schema (Drizzle + Neon)
 ```
@@ -129,6 +174,16 @@ cp config/.env.template .env
 python3 main.py
 ```
 
+### Web App (Local)
+
+```bash
+cd web
+npm install
+cp .env.example .env.local
+# Edit .env.local with ALCHEMY_OPTIMISM_RPC key
+npm run dev
+```
+
 ### Deploy to Bot-Hosting.net
 
 1. Create a Discord bot server at [bot-hosting.net](https://bot-hosting.net)
@@ -145,15 +200,21 @@ python3 main.py
 | `DEBUG` | No | Set to `TRUE` for verbose logging |
 | `WEB_WEBHOOK_URL` | No | Webhook URL for web dashboard |
 | `WEBHOOK_SECRET` | No | Secret for webhook auth |
+| `ALCHEMY_OPTIMISM_RPC` | For leaderboard | Alchemy RPC URL for Optimism |
 
 ## Onchain Integration
 
 - **Respect Contract**: Soulbound ERC-1155 on Optimism via [ORDAO](https://optimismfractal.com/council)
+- **OG Respect (ERC-20)**: `0x34cE89baA7E4a4B00E17F7E4C0cb97105C216957`
+- **ZOR Respect (ERC-1155)**: `0x9885CCeEf7E8371Bf8d6f2413723D25917E7445c`
 - **Submit UI**: [zao.frapps.xyz/submitBreakout](https://zao.frapps.xyz/submitBreakout)
 - **Toolkit**: [Optimystics/frapps](https://github.com/Optimystics/frapps)
 
 ## Recently Shipped
 
+- [x] **Introduction lookup** — `/intro @user` fetches and caches introductions from #intros channel
+- [x] **Proposal voting system** — `/propose` creates threaded proposals with Respect-weighted voting (OG + ZOR token-gated)
+- [x] **Respect leaderboard** — Web page + `/leaderboard` command with live onchain OG + ZOR Respect balances
 - [x] **ENS name registration** — `/register vitalik.eth` resolves and stores the address automatically
 - [x] **Voice channel audio ping** — Bot joins voice and plays a ding each voting round
 - [x] **Voice channel thread link** — Auto-posts voting thread link in voice channel text chat
@@ -177,8 +238,7 @@ python3 main.py
 
 ### Onchain / Web
 - [ ] **Transaction verification** — Listen for onchain tx after submitBreakout and confirm back in Discord
-- [ ] **Web dashboard** — Wire up the `web/` folder for live voting status, historical rankings, leaderboards
-- [ ] **Respect leaderboard** — `/leaderboard` command showing cumulative Respect earned across all fractals
+- [ ] **Web dashboard** — Wire up the `web/` folder for live voting status, historical rankings
 
 ### Operational
 - [ ] **Scheduled fractals** — `/schedule` command for recurring weekly fractals with reminders
@@ -188,5 +248,6 @@ python3 main.py
 
 - **THE ZAO Discord**: [discord.gg/thezao](https://discord.gg/thezao)
 - **Onchain Dashboard**: [zao.frapps.xyz](https://zao.frapps.xyz)
+- **Respect Leaderboard**: [zao-fractal.vercel.app/leaderboard](https://zao-fractal.vercel.app/leaderboard)
 - **Optimism Fractal**: [optimismfractal.com](https://optimismfractal.com)
 - **Eden Fractal**: [edenfractal.com](https://edenfractal.com)
