@@ -41,6 +41,8 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/proposals` | List all active proposals |
 | `/proposal <id>` | View details and vote breakdown for a proposal |
 | `/leaderboard` | View the ZAO Respect leaderboard |
+| `/timer [minutes] [shuffle]` | Start a presentation timer for voice channel members |
+| `/timer_add [minutes]` | Add extra time to the current speaker |
 
 ### Supreme Admin Only
 
@@ -99,6 +101,17 @@ Live onchain leaderboard at [zao-fractal.vercel.app/leaderboard](https://zao-fra
 - 5-minute server-side cache for fast responses
 - `/leaderboard` command in Discord links directly to the web page
 
+## Presentation Timer
+
+Run `/timer` before voting to give each member structured speaking time:
+
+- **Auto-detects speakers** from your voice channel (2-6 members)
+- **Live countdown** using Discord's built-in relative timestamps (updates client-side)
+- **Facilitator controls** — Skip, Pause, Resume, and Stop buttons
+- **`/timer_add`** — Add extra minutes to the current speaker if needed
+- **Shuffle option** — Randomize speaker order with `shuffle: True`
+- When all speakers finish, the bot announces "Ready to begin voting!"
+
 ## Wallet System
 
 The bot maps Discord users to Ethereum wallet addresses for onchain submission:
@@ -132,6 +145,7 @@ fractalbotfeb2026/
 │   ├── guide.py               # /guide + /leaderboard commands
 │   ├── intro.py               # /intro command with cached #intros lookup
 │   ├── proposals.py           # Proposal voting system
+│   ├── timer.py               # Presentation timer with speaker queue
 │   ├── wallet.py              # Wallet + ENS registration commands
 │   └── fractal/
 │       ├── __init__.py
@@ -212,6 +226,7 @@ npm run dev
 
 ## Recently Shipped
 
+- [x] **Presentation timer** — `/timer` manages a speaking queue with live countdown, skip/pause/resume controls
 - [x] **Introduction lookup** — `/intro @user` fetches and caches introductions from #intros channel
 - [x] **Proposal voting system** — `/propose` creates threaded proposals with Respect-weighted voting (OG + ZOR token-gated)
 - [x] **Respect leaderboard** — Web page + `/leaderboard` command with live onchain OG + ZOR Respect balances
@@ -227,7 +242,6 @@ npm run dev
 ## Roadmap / Ideas
 
 ### High Impact / Quick Wins
-- [ ] **Presentation timer** — Manage a speaking queue with countdown timer per person before voting begins
 - [ ] **Vote timeout** — Auto-advance or warn if a round goes too long without reaching threshold
 - [ ] **History tracking** — Log completed fractals to track cumulative Respect earned per member over time
 
