@@ -38,6 +38,7 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/guide` | Learn how ZAO Fractal works (with link to full web guide) |
 | `/intro <@user>` | Look up a member's introduction from #intros |
 | `/propose <title> <description> [type] [amount]` | Create a proposal for community voting |
+| `/curate <project> [description] [image]` | Nominate a project for the ZAO Fund (yes/no vote) |
 | `/proposals` | List all active proposals |
 | `/proposal <id>` | View details and vote breakdown for a proposal |
 | `/leaderboard` | View the ZAO Respect leaderboard |
@@ -82,14 +83,21 @@ The `/intro` command lets anyone look up a member's introduction from the #intro
 - **Rich embed** — Shows intro text, link to their [thezao.com](https://thezao.com) community page, and wallet address if registered
 - **Admin refresh** — `/admin_refresh_intros` rebuilds the entire cache from channel history
 
-## Proposal System
+## Proposal & Curation System
 
-Community proposals with threaded discussion and voting:
+Community proposals and project curation with threaded discussion and Respect-weighted voting:
 
 - **`/propose`** — Create a proposal (Text, Governance, or Funding type)
   - **Text/Funding** — Yes / No / Abstain voting buttons
   - **Governance** — Custom options entered via modal (up to 5 choices)
   - Each proposal gets its own discussion thread
+- **`/curate`** — Quick yes/no vote for project curation (e.g. Artizen Fund projects)
+  - Accepts a project name or URL — auto-extracts name from Artizen Fund URL slugs
+  - Optional `description` and `image` parameters for richer embeds
+  - Best-effort Open Graph scraper auto-fills title, description, and thumbnail from project URLs
+  - Clickable embed title links directly to the project page
+- **Live vote tallies** — Proposal embeds auto-update after each vote with progress bars showing weighted results
+- **Proposals channel** — New proposals are announced in a dedicated channel with a pinned active proposals index
 - **Persistent votes** — Voting buttons survive bot restarts
 - **Respect-weighted** — Vote power = your total onchain Respect (OG + ZOR). Must hold Respect tokens and have a registered wallet to vote.
 - **Admin controls** — Close voting to post final results, or delete proposals entirely
@@ -156,7 +164,7 @@ fractalbotfeb2026/
 │   ├── base.py                # Shared utilities (voice check, role check)
 │   ├── guide.py               # /guide + /leaderboard commands
 │   ├── intro.py               # /intro command with cached #intros lookup
-│   ├── proposals.py           # Proposal voting system
+│   ├── proposals.py           # Proposal + curation voting system
 │   ├── history.py             # Fractal history tracking + search
 │   ├── timer.py               # Presentation timer with speaker queue
 │   ├── wallet.py              # Wallet + ENS registration commands
@@ -172,7 +180,7 @@ fractalbotfeb2026/
 │   ├── wallets.json           # Discord ID → wallet mappings
 │   ├── names_to_wallets.json  # Name → wallet mappings (pre-loaded)
 │   ├── intros.json            # Cached #intros channel messages
-│   ├── proposals.json         # Proposal data + votes
+│   ├── proposals.json         # Proposal + curation data + votes
 │   └── history.json           # Completed fractal results log
 └── web/                       # Next.js web app (Vercel)
     ├── pages/
@@ -240,6 +248,10 @@ npm run dev
 
 ## Recently Shipped
 
+- [x] **Project curation** — `/curate` for quick yes/no Respect-weighted votes on projects (Artizen Fund integration)
+- [x] **Live vote tallies** — Proposal embeds auto-update with progress bars after each vote
+- [x] **Proposals channel index** — Pinned active proposals list + announcements in dedicated channel
+- [x] **OG meta scraper** — Auto-fills project title, description, and thumbnail from URLs
 - [x] **Fractal history tracking** — `/history`, `/mystats`, `/rankings` with searchable log of all completed fractals
 - [x] **Presentation timer** — `/timer` manages a speaking queue with live countdown, skip/pause/resume controls
 - [x] **Introduction lookup** — `/intro @user` fetches and caches introductions from #intros channel
@@ -258,15 +270,17 @@ npm run dev
 
 ### High Impact / Quick Wins
 - [ ] **Vote timeout** — Auto-advance or warn if a round goes too long without reaching threshold
+- [ ] **Proposal deadlines** — Optional auto-close timer on proposals
 
 ### UX Improvements
 - [ ] **Auto-split into groups** — For larger meetings (7+ people in voice), automatically split into balanced groups of 3-6
 - [ ] **Mid-fractal member handling** — Gracefully handle someone leaving voice/Discord mid-fractal (remove from candidates, adjust threshold)
 - [ ] **Facilitator rotation** — Track who's facilitated before and suggest/auto-assign facilitators fairly
+- [ ] **Vote delegation** — Let members delegate their Respect vote weight to someone else
 
 ### Onchain / Web
 - [ ] **Transaction verification** — Listen for onchain tx after submitBreakout and confirm back in Discord
-- [ ] **Web dashboard** — Wire up the `web/` folder for live voting status, historical rankings
+- [ ] **Web dashboard** — Wire up the `web/` folder for live voting status, historical rankings, participation trends
 
 ### Operational
 - [ ] **Scheduled fractals** — `/schedule` command for recurring weekly fractals with reminders
