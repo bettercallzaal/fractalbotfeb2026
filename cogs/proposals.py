@@ -3,12 +3,13 @@ from discord import app_commands
 from discord.ext import commands
 import json
 import os
+import re
 import logging
 import time
 import aiohttp
 from datetime import datetime
 from cogs.base import BaseCog
-from config.config import PROPOSAL_TYPES, MAX_PROPOSAL_OPTIONS
+from config.config import PROPOSAL_TYPES, MAX_PROPOSAL_OPTIONS, PROPOSALS_CHANNEL_ID
 
 DATA_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
 PROPOSALS_FILE = os.path.join(DATA_DIR, 'proposals.json')
@@ -20,6 +21,10 @@ ZOR_TOKEN_ID = 0
 
 # Default public Optimism RPC (Alchemy key optional via env)
 DEFAULT_OPTIMISM_RPC = 'https://mainnet.optimism.io'
+
+# Embed constants
+TYPE_EMOJIS = {'text': '\U0001f4dd', 'governance': '\u2696\ufe0f', 'funding': '\U0001f4b0', 'curate': '\U0001f3a8'}
+TYPE_LABELS = {'text': 'Text', 'governance': 'Governance', 'funding': 'Funding', 'curate': 'Curation'}
 
 
 class RespectBalance:
@@ -70,7 +75,6 @@ class RespectBalance:
 
     async def _query_erc20_balance(self, wallet: str, contract: str) -> float:
         """Query ERC-20 balanceOf — returns balance as float (18 decimals)"""
-        # balanceOf(address) selector: 0x70a08231
         addr_padded = wallet[2:].lower().zfill(64)
         data = f"0x70a08231{addr_padded}"
         result = await self._eth_call(contract, data)
@@ -81,7 +85,6 @@ class RespectBalance:
 
     async def _query_erc1155_balance(self, wallet: str, contract: str, token_id: int) -> float:
         """Query ERC-1155 balanceOf — returns balance as integer (no decimals)"""
-        # balanceOf(address, uint256) selector: 0x00fdd58e
         addr_padded = wallet[2:].lower().zfill(64)
         id_padded = hex(token_id)[2:].zfill(64)
         data = f"0x00fdd58e{addr_padded}{id_padded}"
@@ -95,28 +98,84 @@ class RespectBalance:
 _respect_balance = RespectBalance()
 
 
+async def _get_vote_weight(bot, user: discord.User) -> float:
+    """Look up user's wallet and return their total Respect as vote weight"""
+    wallet = None
+    if hasattr(bot, 'wallet_registry'):
+        wallet = bot.wallet_registry.lookup(user)
+
+    if not wallet:
+        return 0.0
+
+    return await _respect_balance.get_total_respect(wallet)
+
+
+async def _scrape_og_tags(url: str) -> dict:
+    """Best-effort scrape of Open Graph meta tags from a URL"""
+    result = {}
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url, timeout=aiohttp.ClientTimeout(total=5),
+                                   headers={'User-Agent': 'Mozilla/5.0 (compatible; ZAOBot/1.0)'}) as resp:
+                if resp.status != 200:
+                    return result
+                html = await resp.text()
+                # Parse og: meta tags
+                for tag in ['title', 'description', 'image']:
+                    match = re.search(
+                        rf'<meta\s+(?:property|name)=["\']og:{tag}["\']\s+content=["\']([^"\']+)["\']',
+                        html, re.IGNORECASE
+                    )
+                    if not match:
+                        # Try reversed attribute order
+                        match = re.search(
+                            rf'<meta\s+content=["\']([^"\']+)["\']\s+(?:property|name)=["\']og:{tag}["\']',
+                            html, re.IGNORECASE
+                        )
+                    if match:
+                        result[tag] = match.group(1)
+    except Exception:
+        pass
+    return result
+
+
 class ProposalStore:
     """JSON-backed store for proposals with Respect-weighted voting"""
 
     def __init__(self):
         self.logger = logging.getLogger('bot')
-        self._data = {'next_id': 1, 'proposals': {}}
+        self._data = {'next_id': 1, 'proposals': {}, '_index_message_id': None}
         self._load()
 
     def _load(self):
         if os.path.exists(PROPOSALS_FILE):
             with open(PROPOSALS_FILE, 'r') as f:
                 self._data = json.load(f)
+            # Migrate: ensure _index_message_id exists
+            if '_index_message_id' not in self._data:
+                self._data['_index_message_id'] = None
 
     def _save(self):
         os.makedirs(DATA_DIR, exist_ok=True)
         with open(PROPOSALS_FILE, 'w') as f:
             json.dump(self._data, f, indent=2)
 
+    @property
+    def index_message_id(self) -> int | None:
+        mid = self._data.get('_index_message_id')
+        return int(mid) if mid else None
+
+    @index_message_id.setter
+    def index_message_id(self, value: int | None):
+        self._data['_index_message_id'] = str(value) if value else None
+        self._save()
+
     def create(self, title: str, description: str, proposal_type: str,
                author_id: int, thread_id: int, message_id: int,
                options: list[str] | None = None,
-               funding_amount: float | None = None) -> dict:
+               funding_amount: float | None = None,
+               image_url: str | None = None,
+               project_url: str | None = None) -> dict:
         pid = str(self._data['next_id'])
         self._data['next_id'] += 1
 
@@ -129,9 +188,11 @@ class ProposalStore:
             'thread_id': str(thread_id),
             'message_id': str(message_id),
             'status': 'active',
-            'votes': {},  # user_id (str) -> {value, weight}
+            'votes': {},
             'options': options or [],
             'funding_amount': funding_amount,
+            'image_url': image_url,
+            'project_url': project_url,
             'created_at': datetime.utcnow().isoformat()
         }
 
@@ -177,7 +238,6 @@ class ProposalStore:
             return {}
         summary = {}
         for vote_data in proposal['votes'].values():
-            # Handle both old format (string) and new format (dict)
             if isinstance(vote_data, str):
                 value, weight = vote_data, 1.0
             else:
@@ -190,8 +250,105 @@ class ProposalStore:
         return summary
 
 
+def _build_tally_text(store: ProposalStore, proposal_id: str) -> str:
+    """Build a formatted vote tally string with progress bars"""
+    summary = store.get_vote_summary(proposal_id)
+    if not summary:
+        return "*No votes yet \u2014 be the first!*"
+
+    total_weight = sum(s['weight'] for s in summary.values() if s['weight'] > 0)
+    total_voters = sum(s['count'] for s in summary.values())
+    # Don't count abstain weight in percentage calc
+    non_abstain_weight = sum(s['weight'] for k, s in summary.items() if k != 'abstain')
+
+    vote_emojis = {'yes': '\u2705', 'no': '\u274c', 'abstain': '\u2b1c'}
+    lines = []
+
+    # Show yes/no first, then abstain, then any other options
+    ordered_keys = []
+    for key in ['yes', 'no']:
+        if key in summary:
+            ordered_keys.append(key)
+    for key in summary:
+        if key not in ordered_keys and key != 'abstain':
+            ordered_keys.append(key)
+    if 'abstain' in summary:
+        ordered_keys.append('abstain')
+
+    for value in ordered_keys:
+        data = summary[value]
+        emoji = vote_emojis.get(value, '\U0001f539')
+
+        if value == 'abstain':
+            lines.append(f"{emoji} **Abstain:** {data['count']} vote{'s' if data['count'] != 1 else ''}")
+        else:
+            pct = (data['weight'] / non_abstain_weight * 100) if non_abstain_weight > 0 else 0
+            bar_filled = round(pct / 10)
+            bar = '\u2588' * bar_filled + '\u2591' * (10 - bar_filled)
+            lines.append(
+                f"{emoji} **{value.capitalize()}:** {data['count']} vote{'s' if data['count'] != 1 else ''} "
+                f"({data['weight']:,.0f} Respect) {bar} {pct:.0f}%"
+            )
+
+    header = f"**Vote Tally** ({total_voters} voter{'s' if total_voters != 1 else ''} \u2022 {total_weight:,.0f} Respect)"
+    return header + "\n" + "\n".join(lines)
+
+
+def _build_proposal_embed(proposal: dict, store: ProposalStore, author_mention: str = None) -> discord.Embed:
+    """Build a clean proposal embed with live tally"""
+    ptype = proposal['type']
+    emoji = TYPE_EMOJIS.get(ptype, '\U0001f4dd')
+    label = TYPE_LABELS.get(ptype, ptype.capitalize())
+
+    # Author mention or fallback to ID
+    if not author_mention:
+        author_mention = f"<@{proposal['author_id']}>"
+
+    # Build description
+    desc_parts = [f"\U0001f4cb Proposed by {author_mention} \u2022 {label}\n"]
+    desc_parts.append(proposal['description'])
+
+    if proposal.get('funding_amount') is not None:
+        desc_parts.append(f"\n\U0001f4b0 **Funding Amount:** ${proposal['funding_amount']:,.2f}")
+
+    if proposal.get('options'):
+        options_text = "\n".join(f"**{i+1}.** {opt}" for i, opt in enumerate(proposal['options']))
+        desc_parts.append(f"\n**Options:**\n{options_text}")
+
+    embed = discord.Embed(
+        title=f"{emoji} {proposal['title']}",
+        description="\n".join(desc_parts),
+        color=0x57F287,
+        url=proposal.get('project_url')
+    )
+
+    # Thumbnail image if available
+    if proposal.get('image_url'):
+        embed.set_thumbnail(url=proposal['image_url'])
+
+    # Live tally
+    tally = _build_tally_text(store, proposal['id'])
+    embed.add_field(name="\u200b", value=tally, inline=False)
+
+    embed.set_footer(text="Vote with your Respect \u2022 ZAO Fractal \u2022 zao.frapps.xyz")
+    return embed
+
+
+async def _update_proposal_embed(bot, store: ProposalStore, proposal: dict):
+    """Edit the original proposal message to refresh the vote tally"""
+    try:
+        thread = bot.get_channel(int(proposal['thread_id']))
+        if not thread:
+            return
+        message = await thread.fetch_message(int(proposal['message_id']))
+        embed = _build_proposal_embed(proposal, store)
+        await message.edit(embed=embed)
+    except (discord.NotFound, discord.HTTPException) as e:
+        logging.getLogger('bot').error(f"Failed to update proposal embed: {e}")
+
+
 class ProposalVoteView(discord.ui.View):
-    """Yes/No/Abstain voting buttons for text and funding proposals"""
+    """Yes/No/Abstain voting buttons for text, funding, and curate proposals"""
 
     def __init__(self, store: ProposalStore, proposal_id: str, bot=None):
         super().__init__(timeout=None)
@@ -214,7 +371,6 @@ class ProposalVoteView(discord.ui.View):
     async def _handle_vote(self, interaction: discord.Interaction, value: str):
         await interaction.response.defer(ephemeral=True)
 
-        # Look up voter's wallet and Respect balance
         bot = self.bot or interaction.client
         weight = await _get_vote_weight(bot, interaction.user)
 
@@ -228,13 +384,14 @@ class ProposalVoteView(discord.ui.View):
 
         success = self.store.vote(self.proposal_id, interaction.user.id, value, weight)
         if success:
-            summary = self.store.get_vote_summary(self.proposal_id)
-            total_weight = sum(s['weight'] for s in summary.values())
             await interaction.followup.send(
-                f"Vote recorded: **{value}** (weight: {weight:,.0f} Respect). "
-                f"Total weighted votes: {total_weight:,.0f}",
+                f"Vote recorded: **{value}** (weight: {weight:,.0f} Respect)",
                 ephemeral=True
             )
+            # Update the embed with live tally
+            proposal = self.store.get(self.proposal_id)
+            if proposal:
+                await _update_proposal_embed(bot, self.store, proposal)
         else:
             await interaction.followup.send(
                 "This proposal is no longer accepting votes.", ephemeral=True
@@ -266,7 +423,6 @@ class GovernanceVoteView(discord.ui.View):
             button.callback = self._make_callback(option)
             self.add_item(button)
 
-        # Always add abstain
         abstain_btn = discord.ui.Button(
             style=discord.ButtonStyle.secondary,
             label="Abstain",
@@ -292,30 +448,19 @@ class GovernanceVoteView(discord.ui.View):
 
             success = self.store.vote(self.proposal_id, interaction.user.id, value, weight)
             if success:
-                summary = self.store.get_vote_summary(self.proposal_id)
-                total_weight = sum(s['weight'] for s in summary.values())
                 await interaction.followup.send(
-                    f"Vote recorded: **{value}** (weight: {weight:,.0f} Respect). "
-                    f"Total weighted votes: {total_weight:,.0f}",
+                    f"Vote recorded: **{value}** (weight: {weight:,.0f} Respect)",
                     ephemeral=True
                 )
+                # Update the embed with live tally
+                proposal = self.store.get(self.proposal_id)
+                if proposal:
+                    await _update_proposal_embed(bot, self.store, proposal)
             else:
                 await interaction.followup.send(
                     "This proposal is no longer accepting votes.", ephemeral=True
                 )
         return callback
-
-
-async def _get_vote_weight(bot, user: discord.User) -> float:
-    """Look up user's wallet and return their total Respect as vote weight"""
-    wallet = None
-    if hasattr(bot, 'wallet_registry'):
-        wallet = bot.wallet_registry.lookup(user)
-
-    if not wallet:
-        return 0.0
-
-    return await _respect_balance.get_total_respect(wallet)
 
 
 class GovernanceOptionsModal(discord.ui.Modal, title="Governance Proposal Options"):
@@ -370,6 +515,78 @@ class ProposalsCog(BaseCog):
                 view = ProposalVoteView(self.store, pid, bot=self.bot)
             self.bot.add_view(view, message_id=int(proposal['message_id']))
 
+    # ── Proposals channel helpers ──
+
+    async def _get_proposals_channel(self) -> discord.TextChannel | None:
+        """Get the dedicated proposals channel"""
+        return self.bot.get_channel(PROPOSALS_CHANNEL_ID)
+
+    async def _post_to_proposals_channel(self, proposal: dict, thread: discord.Thread):
+        """Post an announcement in the proposals channel when a new proposal is created"""
+        channel = await self._get_proposals_channel()
+        if not channel:
+            return
+
+        emoji = TYPE_EMOJIS.get(proposal['type'], '\U0001f4dd')
+        label = TYPE_LABELS.get(proposal['type'], proposal['type'].capitalize())
+
+        await channel.send(
+            f"{emoji} **New {label} Proposal:** {proposal['title']}\n"
+            f"Vote and discuss here \u2192 {thread.mention}"
+        )
+
+    async def _update_proposals_index(self):
+        """Update or create a pinned index of all active proposals in the proposals channel"""
+        channel = await self._get_proposals_channel()
+        if not channel:
+            return
+
+        active = self.store.get_active()
+
+        embed = discord.Embed(
+            title="\U0001f5f3\ufe0f Active Proposals",
+            color=0x57F287
+        )
+
+        if active:
+            lines = []
+            for p in active:
+                emoji = TYPE_EMOJIS.get(p['type'], '\U0001f4dd')
+                voter_count = len(p['votes'])
+                summary = self.store.get_vote_summary(p['id'])
+                total_respect = sum(s['weight'] for s in summary.values()) if summary else 0
+
+                lines.append(
+                    f"{emoji} **#{p['id']} \u2014 {p['title']}**\n"
+                    f"\u2003\u2003{voter_count} voter{'s' if voter_count != 1 else ''} \u2022 "
+                    f"{total_respect:,.0f} Respect \u2022 <#{p['thread_id']}>"
+                )
+            embed.description = "\n\n".join(lines)
+        else:
+            embed.description = "*No active proposals right now.*"
+
+        embed.set_footer(text="ZAO Fractal \u2022 zao.frapps.xyz")
+
+        # Try to edit existing index message, or create a new one
+        index_mid = self.store.index_message_id
+        if index_mid:
+            try:
+                msg = await channel.fetch_message(index_mid)
+                await msg.edit(embed=embed)
+                return
+            except discord.NotFound:
+                pass
+
+        # Create new index message and pin it
+        msg = await channel.send(embed=embed)
+        self.store.index_message_id = msg.id
+        try:
+            await msg.pin()
+        except discord.HTTPException:
+            pass
+
+    # ── Commands ──
+
     @app_commands.command(
         name="propose",
         description="Create a new proposal for community voting"
@@ -402,10 +619,62 @@ class ProposalsCog(BaseCog):
             interaction, title, description, ptype, funding_amount=amount
         )
 
+    @app_commands.command(
+        name="curate",
+        description="Nominate a project for the ZAO Fund \u2014 creates a Respect-weighted yes/no vote"
+    )
+    @app_commands.describe(
+        project="Project name or Artizen Fund URL",
+        description="Why should the ZAO fund this? (optional)",
+        image="Image URL for the project thumbnail (optional)"
+    )
+    async def curate(self, interaction: discord.Interaction, project: str,
+                     description: str = None, image: str = None):
+        """Quick-create a yes/no curation vote for a project"""
+        await interaction.response.defer()
+
+        project_name = project
+        project_url = None
+        image_url = image
+
+        if 'artizen.fund' in project or project.startswith('http'):
+            project_url = project
+            # Try to extract name from Artizen URL slug
+            if 'artizen.fund' in project:
+                slug_match = re.search(r'/(?:index/mf|project)/([^/?#]+)', project)
+                if slug_match:
+                    slug = slug_match.group(1)
+                    project_name = slug.replace('-', ' ').title()
+
+            # Try to scrape og: tags for title, description, image
+            scraped = await _scrape_og_tags(project_url)
+            if scraped.get('title') and 'artizen.fund' not in project:
+                project_name = scraped['title']
+            if scraped.get('description') and not description:
+                description = scraped['description']
+            if scraped.get('image') and not image_url:
+                image_url = scraped['image']
+
+        title = f"Curate: {project_name}"
+        desc_parts = ["**Should the ZAO fund this project?**\n"]
+        desc_parts.append(f"**Project:** {project_name}")
+        if project_url:
+            desc_parts.append(f"**Link:** [View Project]({project_url})")
+        if description:
+            desc_parts.append(f"\n{description}")
+        desc_parts.append("\nVote **Yes** to include or **No** to pass.")
+
+        await self._create_proposal(
+            interaction, title, "\n".join(desc_parts), 'curate',
+            image_url=image_url, project_url=project_url
+        )
+
     async def _create_proposal(self, interaction: discord.Interaction,
                                 title: str, description: str, ptype: str,
                                 options: list[str] | None = None,
-                                funding_amount: float | None = None):
+                                funding_amount: float | None = None,
+                                image_url: str | None = None,
+                                project_url: str | None = None):
         """Internal method to create and post a proposal"""
         channel = interaction.channel
         if isinstance(channel, discord.Thread):
@@ -418,34 +687,8 @@ class ProposalsCog(BaseCog):
             reason="ZAO Proposal"
         )
 
-        # Build embed
-        type_labels = {'text': 'Text', 'governance': 'Governance', 'funding': 'Funding'}
-        type_emojis = {'text': '\U0001f4dd', 'governance': '\u2696\ufe0f', 'funding': '\U0001f4b0'}
-
-        embed = discord.Embed(
-            title=f"{type_emojis.get(ptype, '')} Proposal: {title}",
-            description=description,
-            color=0x57F287
-        )
-        embed.add_field(name="Type", value=type_labels.get(ptype, ptype), inline=True)
-        embed.add_field(name="Author", value=interaction.user.mention, inline=True)
-        embed.add_field(name="Status", value="Active", inline=True)
-        embed.add_field(
-            name="Voting",
-            value="Respect-weighted \u2014 your vote power equals your total onchain Respect (OG + ZOR)",
-            inline=False
-        )
-
-        if funding_amount is not None:
-            embed.add_field(name="Funding Amount", value=f"${funding_amount:,.2f}", inline=True)
-
-        if options:
-            options_text = "\n".join(f"**{i+1}.** {opt}" for i, opt in enumerate(options))
-            embed.add_field(name="Options", value=options_text, inline=False)
-
-        embed.set_footer(text="ZAO Fractal \u2022 zao.frapps.xyz")
-
-        msg = await thread.send(embed=embed)
+        # Placeholder message to get ID
+        placeholder = await thread.send("\u23f3 Setting up proposal...")
 
         # Store proposal
         proposal = self.store.create(
@@ -454,24 +697,33 @@ class ProposalsCog(BaseCog):
             proposal_type=ptype,
             author_id=interaction.user.id,
             thread_id=thread.id,
-            message_id=msg.id,
+            message_id=placeholder.id,
             options=options,
-            funding_amount=funding_amount
+            funding_amount=funding_amount,
+            image_url=image_url,
+            project_url=project_url
         )
 
-        # Create and attach voting view
+        # Build clean embed
+        embed = _build_proposal_embed(proposal, self.store, interaction.user.mention)
+
+        # Create voting view
         pid = proposal['id']
         if ptype == 'governance' and options:
             view = GovernanceVoteView(self.store, pid, options, bot=self.bot)
         else:
             view = ProposalVoteView(self.store, pid, bot=self.bot)
 
-        self.bot.add_view(view, message_id=msg.id)
-        await msg.edit(view=view)
+        self.bot.add_view(view, message_id=placeholder.id)
+        await placeholder.edit(content=None, embed=embed, view=view)
 
         await interaction.followup.send(
-            f"Proposal **#{pid}** created! Discussion and voting: {thread.mention}"
+            f"Proposal **#{pid}** created! Vote here \u2192 {thread.mention}"
         )
+
+        # Post announcement + update index in proposals channel
+        await self._post_to_proposals_channel(proposal, thread)
+        await self._update_proposals_index()
 
     @app_commands.command(
         name="proposals",
@@ -487,16 +739,18 @@ class ProposalsCog(BaseCog):
             return
 
         embed = discord.Embed(
-            title="Active Proposals",
+            title="\U0001f5f3\ufe0f Active Proposals",
             color=0x57F287
         )
 
         for p in active:
-            total_voters = len(p['votes'])
-            type_label = p['type'].capitalize()
+            emoji = TYPE_EMOJIS.get(p['type'], '\U0001f4dd')
+            summary = self.store.get_vote_summary(p['id'])
+            total_voters = sum(s['count'] for s in summary.values()) if summary else 0
+            total_respect = sum(s['weight'] for s in summary.values()) if summary else 0
             embed.add_field(
-                name=f"#{p['id']} \u2014 {p['title']}",
-                value=f"Type: {type_label} | Voters: {total_voters} | <#{p['thread_id']}>",
+                name=f"{emoji} #{p['id']} \u2014 {p['title']}",
+                value=f"{total_voters} voters \u2022 {total_respect:,.0f} Respect \u2022 <#{p['thread_id']}>",
                 inline=False
             )
 
@@ -519,47 +773,12 @@ class ProposalsCog(BaseCog):
             )
             return
 
-        type_labels = {'text': 'Text', 'governance': 'Governance', 'funding': 'Funding'}
-        summary = self.store.get_vote_summary(str(proposal_id))
-        total_weight = sum(s['weight'] for s in summary.values()) if summary else 0
-        total_voters = sum(s['count'] for s in summary.values()) if summary else 0
-
-        embed = discord.Embed(
-            title=f"Proposal #{proposal['id']}: {proposal['title']}",
-            description=proposal['description'],
-            color=0x57F287
+        embed = _build_proposal_embed(proposal, self.store)
+        embed.add_field(
+            name="Discussion",
+            value=f"<#{proposal['thread_id']}>",
+            inline=False
         )
-        embed.add_field(name="Type", value=type_labels.get(proposal['type'], proposal['type']), inline=True)
-        embed.add_field(name="Status", value=proposal['status'].capitalize(), inline=True)
-        embed.add_field(name="Author", value=f"<@{proposal['author_id']}>", inline=True)
-
-        if proposal.get('funding_amount') is not None:
-            embed.add_field(
-                name="Funding Amount",
-                value=f"${proposal['funding_amount']:,.2f}",
-                inline=True
-            )
-
-        # Vote breakdown (weighted)
-        if summary:
-            breakdown_lines = []
-            for value, data in sorted(summary.items(), key=lambda x: -x[1]['weight']):
-                pct = (data['weight'] / total_weight * 100) if total_weight > 0 else 0
-                bar_filled = round(pct / 10)
-                bar = '\u2588' * bar_filled + '\u2591' * (10 - bar_filled)
-                breakdown_lines.append(
-                    f"**{value}**: {bar} {data['weight']:,.0f} Respect ({data['count']} voters, {pct:.0f}%)"
-                )
-            embed.add_field(
-                name=f"Votes ({total_voters} voters, {total_weight:,.0f} total Respect)",
-                value="\n".join(breakdown_lines),
-                inline=False
-            )
-        else:
-            embed.add_field(name="Votes", value="No votes yet", inline=False)
-
-        embed.add_field(name="Discussion", value=f"<#{proposal['thread_id']}>", inline=False)
-        embed.set_footer(text="ZAO Fractal \u2022 zao.frapps.xyz")
 
         await interaction.followup.send(embed=embed, ephemeral=True)
 
@@ -586,34 +805,15 @@ class ProposalsCog(BaseCog):
             )
             return
 
-        summary = self.store.get_vote_summary(str(proposal_id))
-        total_weight = sum(s['weight'] for s in summary.values()) if summary else 0
-        total_voters = sum(s['count'] for s in summary.values()) if summary else 0
-
         # Build results embed
+        tally = _build_tally_text(self.store, str(proposal_id))
+
         embed = discord.Embed(
-            title=f"Proposal #{proposal['id']} \u2014 CLOSED",
+            title=f"\U0001f512 Proposal #{proposal['id']} \u2014 CLOSED",
             description=f"**{proposal['title']}**\n\n{proposal['description']}",
             color=0xED4245
         )
-
-        if summary:
-            breakdown_lines = []
-            for value, data in sorted(summary.items(), key=lambda x: -x[1]['weight']):
-                pct = (data['weight'] / total_weight * 100) if total_weight > 0 else 0
-                bar_filled = round(pct / 10)
-                bar = '\u2588' * bar_filled + '\u2591' * (10 - bar_filled)
-                breakdown_lines.append(
-                    f"**{value}**: {bar} {data['weight']:,.0f} Respect ({data['count']} voters, {pct:.0f}%)"
-                )
-            embed.add_field(
-                name=f"Final Results ({total_voters} voters, {total_weight:,.0f} total Respect)",
-                value="\n".join(breakdown_lines),
-                inline=False
-            )
-        else:
-            embed.add_field(name="Final Results", value="No votes were cast.", inline=False)
-
+        embed.add_field(name="Final Results", value=tally, inline=False)
         embed.set_footer(text="ZAO Fractal \u2022 zao.frapps.xyz")
 
         # Post results to the proposal thread
@@ -632,6 +832,9 @@ class ProposalsCog(BaseCog):
             f"Proposal #{proposal_id} closed. Results posted to <#{proposal['thread_id']}>.",
             ephemeral=True
         )
+
+        # Update proposals index
+        await self._update_proposals_index()
 
     @app_commands.command(
         name="admin_delete_proposal",
@@ -654,6 +857,8 @@ class ProposalsCog(BaseCog):
             await interaction.followup.send(
                 f"Proposal #{proposal_id} deleted.", ephemeral=True
             )
+            # Update proposals index
+            await self._update_proposals_index()
         else:
             await interaction.followup.send(
                 f"Proposal #{proposal_id} not found.", ephemeral=True

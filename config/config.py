@@ -31,5 +31,6 @@ THREAD_PREFIX = "ZAO Fractal:"
 INTROS_CHANNEL_ID = 1145135336477950053
 
 # Proposal Settings
-PROPOSAL_TYPES = ['text', 'governance', 'funding']
+PROPOSAL_TYPES = ['text', 'governance', 'funding', 'curate']
 MAX_PROPOSAL_OPTIONS = 5
+PROPOSALS_CHANNEL_ID = 1473782633384116397
