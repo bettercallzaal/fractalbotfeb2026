@@ -41,12 +41,16 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/curate <project> [description] [image]` | Nominate a project for the ZAO Fund (yes/no vote) |
 | `/proposals` | List all active proposals |
 | `/proposal <id>` | View details and vote breakdown for a proposal |
-| `/leaderboard` | View the ZAO Respect leaderboard |
+| `/leaderboard` | View top 10 onchain Respect balances inline in Discord |
 | `/timer [minutes] [shuffle]` | Start a presentation timer for voice channel members |
 | `/timer_add [minutes]` | Add extra time to the current speaker |
 | `/history [query]` | Search completed fractals by member, group, or fractal number |
 | `/mystats [@user]` | View cumulative fractal stats and Respect earned |
 | `/rankings` | View cumulative Respect rankings from fractal history |
+| `/hats` | View the ZAO Hats Protocol tree structure |
+| `/hat <name>` | View details about a specific hat |
+| `/myhats [@user]` | See which ZAO hats you or another member wear |
+| `/claimhat` | Get a link to claim a hat on the Hats Protocol app |
 
 ### Supreme Admin Only
 
@@ -74,6 +78,10 @@ Based on the [Respect Game](https://edenfractal.com/fractal-decision-making-proc
 | `/admin_fractal_stats <thread_id>` | Detailed stats for a fractal |
 | `/admin_server_stats` | Server-wide fractal statistics |
 | `/admin_export_data [thread_id]` | Export fractal data as JSON file |
+| `/admin_link_hat <hat_name> <hat_id> <role>` | Link a hat to a Discord role |
+| `/admin_unlink_hat <hat_name>` | Remove a hat-to-role mapping |
+| `/admin_hat_roles` | List all hat-to-role mappings |
+| `/admin_sync_hats` | Manually trigger hat-to-role sync |
 
 ## Introduction Lookup
 
@@ -90,27 +98,70 @@ Community proposals and project curation with threaded discussion and Respect-we
 - **`/propose`** — Create a proposal (Text, Governance, or Funding type)
   - **Text/Funding** — Yes / No / Abstain voting buttons
   - **Governance** — Custom options entered via modal (up to 5 choices)
-  - Each proposal gets its own discussion thread
+  - Each proposal gets its own discussion thread in the dedicated #proposals channel
 - **`/curate`** — Quick yes/no vote for project curation (e.g. Artizen Fund projects)
-  - Accepts a project name or URL — auto-extracts name from Artizen Fund URL slugs
+  - Accepts a project name or URL — auto-extracts name from URL slugs
   - Optional `description` and `image` parameters for richer embeds
   - Best-effort Open Graph scraper auto-fills title, description, and thumbnail from project URLs
   - Clickable embed title links directly to the project page
+- **Thread visibility** — All proposal threads are created in the dedicated #proposals channel so everyone can see and vote
+- **#general notifications** — New proposals post a notification to #general with a clickable link to #proposals
+- **7-day auto-expiry** — Proposals automatically close after 7 days with final results posted to the thread
 - **Live vote tallies** — Proposal embeds auto-update after each vote with progress bars showing weighted results
-- **Proposals channel** — New proposals are announced in a dedicated channel with a pinned active proposals index
+- **Proposals channel index** — Pinned active proposals list auto-updates on create/close
 - **Persistent votes** — Voting buttons survive bot restarts
 - **Respect-weighted** — Vote power = your total onchain Respect (OG + ZOR). Must hold Respect tokens and have a registered wallet to vote.
 - **Admin controls** — Close voting to post final results, or delete proposals entirely
 
 ## Respect Leaderboard
 
-Live onchain leaderboard at [zao-fractal.vercel.app/leaderboard](https://zao-fractal.vercel.app/leaderboard):
+### Discord (`/leaderboard`)
+- Queries all 131 wallets' OG + ZOR balances via raw JSON-RPC `eth_call`
+- Shows **top 10 inline** in Discord with name, total Respect, and OG/ZOR breakdown
+- 5-minute cache for fast responses
+- Links to the full web leaderboard at [thezao.com/zao-leaderboard](https://www.thezao.com/zao-leaderboard)
 
-- Queries OG Respect (ERC-20) and ZOR Respect (ERC-1155) balances from Optimism
-- Uses Multicall3 for efficient batch queries across 130+ member wallets
+### Web ([zao-fractal.vercel.app/leaderboard](https://zao-fractal.vercel.app/leaderboard))
+- Multicall3 batch queries across 130+ member wallets
 - Searchable, sortable table with top-3 medal highlights
-- 5-minute server-side cache for fast responses
-- `/leaderboard` command in Discord links directly to the web page
+- Member names link to individual profile pages
+
+## Hats Protocol Integration
+
+The bot integrates with [Hats Protocol](https://www.hatsprotocol.xyz/) for role-based governance:
+
+- **`/hats`** — View the ZAO Hats tree structure showing all roles and wearers
+- **`/hat <name>`** — View details about a specific hat (description, wearers, eligibility)
+- **`/myhats`** — See which hats you wear based on your registered wallet
+- **`/claimhat`** — Get a link to claim eligible hats on the Hats Protocol app
+- **Admin hat-role sync** — Link onchain hats to Discord roles for automatic syncing
+
+## Offchain Respect Dashboard
+
+Web dashboard replacing Airtable for tracking all three Respect types:
+
+### Public Pages
+- **`/respect`** — Combined leaderboard showing OG Respect (ERC-20), ZOR Respect (ERC-1155), and offchain fractal Respect per member with stat cards and sortable table
+- **`/members/[slug]`** — Individual member profiles with fractal history, contribution log, and Respect breakdown
+
+### Admin Dashboard (`/admin`)
+- **Discord OAuth** — Login with Discord, requires Supreme Admin role
+- **Members tab** — Searchable roster of all members with wallet and intro status
+- **Contributions tab** — Log contributions (intro, attendance, special) that earn OG Respect
+- **Allocations tab** — Queue of pending OG Respect distributions, mark as distributed or cancelled
+
+### API Routes
+
+| Route | Method | Auth | Purpose |
+|-------|--------|------|---------|
+| `/api/dashboard/leaderboard` | GET | Public | Combined leaderboard (onchain + offchain) |
+| `/api/dashboard/stats` | GET | Public | Aggregate stats for header cards |
+| `/api/dashboard/members/[slug]` | GET | Public | Full member profile data |
+| `/api/dashboard/activity` | GET | Public | Recent activity feed |
+| `/api/admin/contributions` | GET/POST | Admin | List/create contributions |
+| `/api/admin/allocations` | GET/POST | Admin | List/create allocations |
+| `/api/admin/allocations/[id]` | PATCH | Admin | Mark distributed/cancelled |
+| `/api/admin/members` | GET | Admin | Full member roster with status |
 
 ## Fractal History & Stats
 
@@ -136,7 +187,7 @@ Run `/timer` before voting to give each member structured speaking time:
 
 The bot maps Discord users to Ethereum wallet addresses for onchain submission:
 
-- **`/register`** — Users self-register their wallet address or ENS name (e.g. `vitalik.eth` → auto-resolves to `0x...`)
+- **`/register`** — Users self-register their wallet address or ENS name (e.g. `vitalik.eth` → auto-resolves to `0x...` using Keccak-256 namehash)
 - **Name matching** — 130+ pre-loaded name→wallet mappings in `data/names_to_wallets.json` auto-match by Discord display name
 - **Admin override** — Admins can register wallets or ENS names for any user with `/admin_register`
 - **`/admin_match_all`** — Shows which server members already have wallets matched
@@ -162,15 +213,16 @@ fractalbotfeb2026/
 │   └── ping.mp3               # Audio notification for voting rounds
 ├── cogs/
 │   ├── base.py                # Shared utilities (voice check, role check)
-│   ├── guide.py               # /guide + /leaderboard commands
+│   ├── guide.py               # /guide + /leaderboard (inline top 10)
 │   ├── intro.py               # /intro command with cached #intros lookup
 │   ├── proposals.py           # Proposal + curation voting system
 │   ├── history.py             # Fractal history tracking + search
 │   ├── timer.py               # Presentation timer with speaker queue
-│   ├── wallet.py              # Wallet + ENS registration commands
+│   ├── wallet.py              # Wallet + ENS registration (Keccak-256)
+│   ├── hats.py                # Hats Protocol tree + role sync
 │   └── fractal/
 │       ├── __init__.py
-│       ├── cog.py             # Slash commands (26 total)
+│       ├── cog.py             # Slash commands (48 total)
 │       ├── group.py           # Core voting logic + voice notifications
 │       └── views.py           # Discord button UIs + naming modal
 ├── utils/
@@ -184,14 +236,40 @@ fractalbotfeb2026/
 │   └── history.json           # Completed fractal results log
 └── web/                       # Next.js web app (Vercel)
     ├── pages/
-    │   ├── index.tsx          # Dashboard UI
+    │   ├── index.tsx          # Landing page
     │   ├── guide.tsx          # Full guide / slide deck (public)
     │   ├── leaderboard.tsx    # Respect leaderboard (public)
+    │   ├── respect.tsx        # Combined Respect dashboard (public)
+    │   ├── members/[slug].tsx # Member profile pages (public)
+    │   ├── admin/index.tsx    # Admin dashboard (Supreme Admin only)
     │   └── api/
-    │       ├── leaderboard.ts # Onchain balance API (Multicall3 + ethers)
-    │       └── ...            # Auth + webhook routes
-    ├── components/ui/         # Radix UI components
-    └── utils/                 # Database schema (Drizzle + Neon)
+    │       ├── leaderboard.ts       # Onchain balance API (Multicall3)
+    │       ├── auth/[...nextauth].ts # Discord OAuth + admin role check
+    │       ├── dashboard/           # Public dashboard APIs
+    │       │   ├── leaderboard.ts   # Combined leaderboard
+    │       │   ├── stats.ts         # Aggregate stats
+    │       │   ├── activity.ts      # Activity feed
+    │       │   └── members/[slug].ts # Member profiles
+    │       └── admin/               # Admin APIs (role-gated)
+    │           ├── members.ts       # Member roster
+    │           ├── contributions.ts # Log contributions
+    │           └── allocations/     # OG Respect distributions
+    │               ├── index.ts     # List/create
+    │               └── [id].ts      # Update status
+    ├── components/
+    │   ├── ui/                # Radix UI components
+    │   └── layout/
+    │       └── DashboardLayout.tsx # Shared navbar + footer
+    ├── types/
+    │   ├── next-auth.d.ts     # Extended session types
+    │   └── dashboard.ts       # Dashboard interfaces
+    └── utils/
+        ├── database.ts        # Drizzle + Neon Postgres
+        ├── schema.ts          # DB schema (users, fractals, contributions, allocations)
+        ├── admin.ts           # Discord role check + requireAdmin middleware
+        ├── loadJsonData.ts    # Read bot JSON files with path fallbacks
+        ├── respectCache.ts    # Multicall3 onchain balance cache
+        └── cn.ts              # Tailwind class merge utility
 ```
 
 ## Setup
@@ -216,7 +294,7 @@ python3 main.py
 cd web
 npm install
 cp .env.example .env.local
-# Edit .env.local with ALCHEMY_OPTIMISM_RPC key
+# Edit .env.local with database URL, Discord OAuth credentials, and RPC key
 npm run dev
 ```
 
@@ -237,6 +315,10 @@ npm run dev
 | `WEB_WEBHOOK_URL` | No | Webhook URL for web dashboard |
 | `WEBHOOK_SECRET` | No | Secret for webhook auth |
 | `ALCHEMY_OPTIMISM_RPC` | For leaderboard | Alchemy RPC URL for Optimism |
+| `DISCORD_CLIENT_ID` | For web auth | Discord OAuth client ID |
+| `DISCORD_CLIENT_SECRET` | For web auth | Discord OAuth client secret |
+| `NEXTAUTH_SECRET` | For web auth | NextAuth session secret |
+| `DATABASE_URL` | For web dashboard | Neon Postgres connection string |
 
 ## Onchain Integration
 
@@ -246,50 +328,62 @@ npm run dev
 - **Submit UI**: [zao.frapps.xyz/submitBreakout](https://zao.frapps.xyz/submitBreakout)
 - **Toolkit**: [Optimystics/frapps](https://github.com/Optimystics/frapps)
 
-## Recently Shipped
+## v1.1 Changelog
 
-- [x] **Project curation** — `/curate` for quick yes/no Respect-weighted votes on projects (Artizen Fund integration)
-- [x] **Live vote tallies** — Proposal embeds auto-update with progress bars after each vote
-- [x] **Proposals channel index** — Pinned active proposals list + announcements in dedicated channel
-- [x] **OG meta scraper** — Auto-fills project title, description, and thumbnail from URLs
-- [x] **Fractal history tracking** — `/history`, `/mystats`, `/rankings` with searchable log of all completed fractals
-- [x] **Presentation timer** — `/timer` manages a speaking queue with live countdown, skip/pause/resume controls
-- [x] **Introduction lookup** — `/intro @user` fetches and caches introductions from #intros channel
-- [x] **Proposal voting system** — `/propose` creates threaded proposals with Respect-weighted voting (OG + ZOR token-gated)
-- [x] **Respect leaderboard** — Web page + `/leaderboard` command with live onchain OG + ZOR Respect balances
-- [x] **ENS name registration** — `/register vitalik.eth` resolves and stores the address automatically
-- [x] **Voice channel audio ping** — Bot joins voice and plays a ding each voting round
-- [x] **Voice channel thread link** — Auto-posts voting thread link in voice channel text chat
-- [x] **Fractal naming modal** — Popup asks for fractal number + group number before starting
-- [x] **Rich embed results** — Results posted as embed with Respect points + one-click submit link
-- [x] **`/guide` command + web slide deck** — Quick explainer in Discord + full guide at `/guide` on web
-- [x] **No grey buttons** — Voting buttons cycle blue/green/red only
-- [x] **Bot-Hosting.net deployment** — Documented deployment to Pterodactyl-based hosting
+### Bug Fixes
+- Fix double-delete KeyError crash in `/endgroup` when ending a fractal
+- Fix `/pause` not actually blocking votes — votes now rejected while paused
+- Fix debug info leak exposing active thread IDs in `/status` error messages
+- Fix ENS namehash using wrong hash algorithm (NIST SHA-3 → Keccak-256)
+
+### Bot Enhancements
+- **Inline leaderboard** — `/leaderboard` now shows top 10 onchain Respect balances directly in Discord (OG + ZOR breakdown per member)
+- **Proposal thread visibility** — All proposal threads now created in dedicated #proposals channel (visible to everyone, not just the creator)
+- **Project name extraction** — `/curate` extracts clean names from URL slugs and OG meta tags instead of showing raw URLs
+- **#general notifications** — New proposals post a notification to #general with a clickable link to #proposals
+- **7-day auto-expiry** — Proposals automatically close after 7 days with final vote results posted to the thread
+- **Hats Protocol** — New `/hats`, `/hat`, `/myhats`, `/claimhat` commands + admin hat-to-role sync
+
+### Web Dashboard (New)
+- **`/respect`** — Combined Respect dashboard with OG, ZOR, and offchain leaderboard
+- **`/members/[slug]`** — Member profile pages with fractal history and Respect breakdown
+- **`/admin`** — Admin dashboard with contribution logging, allocation tracking, and member roster
+- **8 new API routes** — Dashboard stats, leaderboard, activity feed, member profiles, admin CRUD
+- **Discord OAuth** — Login with Discord, Supreme Admin role check for admin pages
+- **DB schema** — New `contributions` and `respect_allocations` Postgres tables
+
+### Infrastructure
+- Updated `.gitignore` for build artifacts and zip files
+- 48 total slash commands (up from ~30)
+- Production deployment on Bot-Hosting.net
 
 ## Roadmap / Ideas
 
-### High Impact / Quick Wins
-- [ ] **Vote timeout** — Auto-advance or warn if a round goes too long without reaching threshold
-- [ ] **Proposal deadlines** — Optional auto-close timer on proposals
+### Scaling (v1.2)
+- [ ] **Paginated proposals** — Split pinned index and `/proposals` command across pages for 10-15+ proposals
+- [ ] **Proposal filtering** — Filter by type (text/governance/funding/curate) and status (active/closed)
+- [ ] **Auto-archive** — Move closed proposals to archive after 14 days
+- [ ] **Web proposals page** — Browse and view proposals on the website
 
 ### UX Improvements
+- [ ] **Vote timeout** — Auto-advance or warn if a round goes too long without reaching threshold
 - [ ] **Auto-split into groups** — For larger meetings (7+ people in voice), automatically split into balanced groups of 3-6
-- [ ] **Mid-fractal member handling** — Gracefully handle someone leaving voice/Discord mid-fractal (remove from candidates, adjust threshold)
+- [ ] **Mid-fractal member handling** — Gracefully handle someone leaving voice/Discord mid-fractal
 - [ ] **Facilitator rotation** — Track who's facilitated before and suggest/auto-assign facilitators fairly
-- [ ] **Vote delegation** — Let members delegate their Respect vote weight to someone else
 
 ### Onchain / Web
 - [ ] **Transaction verification** — Listen for onchain tx after submitBreakout and confirm back in Discord
-- [ ] **Web dashboard** — Wire up the `web/` folder for live voting status, historical rankings, participation trends
+- [ ] **Web voting** — Vote on proposals from the website (not just Discord)
 
 ### Operational
 - [ ] **Scheduled fractals** — `/schedule` command for recurring weekly fractals with reminders
-- [ ] **Multi-group coordination** — "Fractal master" view showing status of all groups running in parallel during a meeting
+- [ ] **Multi-group coordination** — "Fractal master" view showing status of all groups running in parallel
 
 ## Links
 
 - **THE ZAO Discord**: [discord.gg/thezao](https://discord.gg/thezao)
 - **Onchain Dashboard**: [zao.frapps.xyz](https://zao.frapps.xyz)
-- **Respect Leaderboard**: [zao-fractal.vercel.app/leaderboard](https://zao-fractal.vercel.app/leaderboard)
+- **Respect Leaderboard**: [thezao.com/zao-leaderboard](https://www.thezao.com/zao-leaderboard)
+- **Web Dashboard**: [zao-fractal.vercel.app](https://zao-fractal.vercel.app)
 - **Optimism Fractal**: [optimismfractal.com](https://optimismfractal.com)
 - **Eden Fractal**: [edenfractal.com](https://edenfractal.com)

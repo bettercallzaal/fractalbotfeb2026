@@ -767,7 +767,7 @@ class ProposalsCog(BaseCog):
         await self._post_to_proposals_channel(proposal, thread)
         await self._update_proposals_index()
 
-        # Notify #general with a link to vote
+        # Notify #general with a rich embed linking to proposals channel
         GENERAL_CHANNEL_ID = 1127115903113367738
         general = interaction.guild.get_channel(GENERAL_CHANNEL_ID)
         if general:
@@ -775,10 +775,22 @@ class ProposalsCog(BaseCog):
             label = TYPE_LABELS.get(ptype, ptype.capitalize())
             proposals_channel = interaction.guild.get_channel(PROPOSALS_CHANNEL_ID)
             channel_mention = proposals_channel.mention if proposals_channel else '#proposals'
-            await general.send(
-                f"{emoji} **New {label} Proposal:** {title}\n"
-                f"Head over to {channel_mention} to vote! *Voting closes in 7 days.*"
+
+            notify_embed = discord.Embed(
+                title=f"{emoji} {title}",
+                description=description[:300] + ('...' if len(description) > 300 else ''),
+                color=0x57F287,
+                url=project_url if project_url else None,
             )
+            if image_url:
+                notify_embed.set_thumbnail(url=image_url)
+            notify_embed.add_field(
+                name='Vote Now',
+                value=f"Head to {channel_mention} to cast your Respect-weighted vote!\nVoting closes in **7 days**.",
+                inline=False
+            )
+            notify_embed.set_footer(text=f'{label} Proposal • ZAO Fractal • zao.frapps.xyz')
+            await general.send(embed=notify_embed)
 
     @app_commands.command(
         name="proposals",
