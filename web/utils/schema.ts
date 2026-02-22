@@ -136,3 +136,41 @@ export const achievementsRelations = relations(achievements, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+// Contributions - admin-logged activities that earn OG Respect
+export const contributions = pgTable('contributions', {
+  id: serial('id').primaryKey(),
+  memberName: varchar('member_name', { length: 255 }).notNull(),
+  walletAddress: varchar('wallet_address', { length: 255 }),
+  discordId: varchar('discord_id', { length: 255 }),
+  type: varchar('type', { length: 100 }).notNull(), // 'intro', 'attendance', 'special', 'fractal_hosting'
+  description: text('description').notNull(),
+  respectAmount: integer('respect_amount').notNull(),
+  loggedBy: varchar('logged_by', { length: 255 }).notNull(),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+// Respect allocations - pending OG Respect distributions
+export const respectAllocations = pgTable('respect_allocations', {
+  id: serial('id').primaryKey(),
+  memberName: varchar('member_name', { length: 255 }).notNull(),
+  walletAddress: varchar('wallet_address', { length: 255 }).notNull(),
+  amount: integer('amount').notNull(),
+  reason: text('reason'),
+  status: varchar('status', { length: 50 }).default('pending'), // 'pending', 'distributed', 'cancelled'
+  contributionId: integer('contribution_id').references(() => contributions.id),
+  loggedBy: varchar('logged_by', { length: 255 }).notNull(),
+  distributedAt: timestamp('distributed_at'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+export const contributionsRelations = relations(contributions, ({ many }) => ({
+  allocations: many(respectAllocations),
+}));
+
+export const respectAllocationsRelations = relations(respectAllocations, ({ one }) => ({
+  contribution: one(contributions, {
+    fields: [respectAllocations.contributionId],
+    references: [contributions.id],
+  }),
+}));

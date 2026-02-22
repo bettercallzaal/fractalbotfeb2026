@@ -1,4 +1,5 @@
 import Head from 'next/head';
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
@@ -234,14 +235,12 @@ export default function Leaderboard() {
                         {getMedal(entry.rank)} {entry.rank}
                       </td>
                       <td className="px-4 py-3">
-                        <a
-                          href={`https://thezao.com/community/${slugify(entry.name)}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
+                        <Link
+                          href={`/members/${slugify(entry.name)}`}
                           className="text-primary hover:underline font-medium"
                         >
                           {entry.name}
-                        </a>
+                        </Link>
                       </td>
                       <td className="px-4 py-3 text-sm text-right font-mono">
                         {parseFloat(entry.ogRespect).toLocaleString(undefined, {

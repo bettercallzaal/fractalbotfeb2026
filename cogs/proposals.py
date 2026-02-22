@@ -1,13 +1,13 @@
 import discord
 from discord import app_commands
-from discord.ext import commands
+from discord.ext import commands, tasks
 import json
 import os
 import re
 import logging
 import time
 import aiohttp
-from datetime import datetime
+from datetime import datetime, timedelta
 from cogs.base import BaseCog
 from config.config import PROPOSAL_TYPES, MAX_PROPOSAL_OPTIONS, PROPOSALS_CHANNEL_ID
 
@@ -514,6 +514,41 @@ class ProposalsCog(BaseCog):
             else:
                 view = ProposalVoteView(self.store, pid, bot=self.bot)
             self.bot.add_view(view, message_id=int(proposal['message_id']))
+        self._expire_proposals.start()
+
+    def cog_unload(self):
+        self._expire_proposals.cancel()
+
+    @tasks.loop(hours=1)
+    async def _expire_proposals(self):
+        """Close proposals older than 7 days"""
+        now = datetime.utcnow()
+        for proposal in self.store.get_active():
+            created = datetime.fromisoformat(proposal['created_at'])
+            if now - created >= timedelta(days=7):
+                self.store.close(proposal['id'])
+                self.logger.info(f"Auto-closed proposal #{proposal['id']} after 7 days")
+                # Update the embed to show it's closed
+                await _update_proposal_embed(self.bot, self.store, self.store.get(proposal['id']))
+                # Post closure notice in the thread
+                try:
+                    thread = self.bot.get_channel(int(proposal['thread_id']))
+                    if thread:
+                        summary = self.store.get_vote_summary(proposal['id'])
+                        result_lines = []
+                        for option, data in sorted(summary.items(), key=lambda x: x[1]['weight'], reverse=True):
+                            result_lines.append(f"**{option.upper()}**: {data['count']} votes ({data['weight']:,.0f} Respect)")
+                        result_text = "\n".join(result_lines) if result_lines else "No votes cast."
+                        await thread.send(
+                            f"⏰ **Voting has closed** (7-day limit reached)\n\n"
+                            f"**Final Results:**\n{result_text}"
+                        )
+                except Exception as e:
+                    self.logger.error(f"Error posting closure for proposal #{proposal['id']}: {e}")
+
+    @_expire_proposals.before_loop
+    async def _before_expire(self):
+        await self.bot.wait_until_ready()
 
     # ── Proposals channel helpers ──
 
@@ -639,16 +674,17 @@ class ProposalsCog(BaseCog):
 
         if 'artizen.fund' in project or project.startswith('http'):
             project_url = project
-            # Try to extract name from Artizen URL slug
-            if 'artizen.fund' in project:
-                slug_match = re.search(r'/(?:index/mf|project)/([^/?#]+)', project)
-                if slug_match:
-                    slug = slug_match.group(1)
-                    project_name = slug.replace('-', ' ').title()
+            # Extract name from URL slug (works for Artizen and generic paths)
+            slug_match = re.search(r'/([^/?#]+?)(?:\?|#|$)', project.rstrip('/'))
+            if slug_match:
+                slug = slug_match.group(1)
+                # Only use slug if it looks like a name (not a domain or route keyword)
+                if slug not in ('index', 'p', 'mf', 'project') and len(slug) > 2:
+                    project_name = slug.replace('-', ' ').replace('_', ' ').title()
 
             # Try to scrape og: tags for title, description, image
             scraped = await _scrape_og_tags(project_url)
-            if scraped.get('title') and 'artizen.fund' not in project:
+            if scraped.get('title'):
                 project_name = scraped['title']
             if scraped.get('description') and not description:
                 description = scraped['description']
@@ -676,9 +712,12 @@ class ProposalsCog(BaseCog):
                                 image_url: str | None = None,
                                 project_url: str | None = None):
         """Internal method to create and post a proposal"""
-        channel = interaction.channel
-        if isinstance(channel, discord.Thread):
-            channel = channel.parent
+        # Always create threads in the dedicated proposals channel so everyone can see them
+        from config.config import PROPOSALS_CHANNEL_ID
+        channel = interaction.guild.get_channel(PROPOSALS_CHANNEL_ID)
+        if channel is None:
+            await interaction.followup.send("❌ Proposals channel not found. Contact an admin.", ephemeral=True)
+            return
 
         # Create thread for discussion
         thread = await channel.create_thread(
@@ -717,13 +756,29 @@ class ProposalsCog(BaseCog):
         self.bot.add_view(view, message_id=placeholder.id)
         await placeholder.edit(content=None, embed=embed, view=view)
 
-        await interaction.followup.send(
-            f"Proposal **#{pid}** created! Vote here \u2192 {thread.mention}"
-        )
+        try:
+            await interaction.followup.send(
+                f"Proposal **#{pid}** created! Vote here \u2192 {thread.mention}"
+            )
+        except discord.NotFound:
+            pass  # Interaction expired, but proposal was created successfully
 
         # Post announcement + update index in proposals channel
         await self._post_to_proposals_channel(proposal, thread)
         await self._update_proposals_index()
+
+        # Notify #general with a link to vote
+        GENERAL_CHANNEL_ID = 1127115903113367738
+        general = interaction.guild.get_channel(GENERAL_CHANNEL_ID)
+        if general:
+            emoji = TYPE_EMOJIS.get(ptype, '\U0001f4dd')
+            label = TYPE_LABELS.get(ptype, ptype.capitalize())
+            proposals_channel = interaction.guild.get_channel(PROPOSALS_CHANNEL_ID)
+            channel_mention = proposals_channel.mention if proposals_channel else '#proposals'
+            await general.send(
+                f"{emoji} **New {label} Proposal:** {title}\n"
+                f"Head over to {channel_mention} to vote! *Voting closes in 7 days.*"
+            )
 
     @app_commands.command(
         name="proposals",

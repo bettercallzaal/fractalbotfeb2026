@@ -107,9 +107,10 @@ class FractalCog(BaseCog):
             await interaction.followup.send("❌ Only the group facilitator can end the fractal group.", ephemeral=True)
             return
 
-        # End the fractal group
+        # End the fractal group (end_fractal() removes from active_groups itself)
         await group.end_fractal()
-        del self.active_groups[interaction.channel.id]
+        # Guard against double-delete since end_fractal() already removes it
+        self.active_groups.pop(interaction.channel.id, None)
 
         await interaction.followup.send("✅ Fractal group ended successfully.", ephemeral=True)
 
@@ -134,9 +135,7 @@ class FractalCog(BaseCog):
         # Check if this is an active fractal group
         group = self.active_groups.get(interaction.channel.id)
         if not group:
-            # Debug: show what threads we have
-            active_thread_ids = list(self.active_groups.keys())
-            await interaction.followup.send(f"❌ This thread is not an active fractal group.\nActive threads: {active_thread_ids}\nCurrent thread: {interaction.channel.id}", ephemeral=True)
+            await interaction.followup.send("❌ This thread is not an active fractal group.", ephemeral=True)
             return
 
         # Build status message

@@ -1,0 +1,29 @@
+{
+  "fractals": [
+    {
+      "id": 1,
+      "group_name": "Fractal 1test - Group 2test",
+      "facilitator_id": "214921134477541377",
+      "facilitator_name": "Zaal",
+      "fractal_number": "1test",
+      "group_number": "2test",
+      "guild_id": "1127115902010277989",
+      "thread_id": "1474093584822178040",
+      "rankings": [
+        {
+          "user_id": "691422751491227719",
+          "display_name": "OhnahjiB",
+          "level": 6,
+          "respect": 110
+        },
+        {
+          "user_id": "214921134477541377",
+          "display_name": "Zaal",
+          "level": 5,
+          "respect": 68
+        }
+      ],
+      "completed_at": "2026-02-19T17:22:11.949284"
+    }
+  ]
+}

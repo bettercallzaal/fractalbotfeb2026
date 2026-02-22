@@ -11,6 +11,8 @@ declare module "next-auth" {
       walletAddress?: string | null
       totalFractals?: number
       totalWins?: number
+      isAdmin?: boolean
+      accessToken?: string
     }
   }
 
@@ -26,5 +28,7 @@ declare module "next-auth" {
 declare module "next-auth/jwt" {
   interface JWT {
     discordId?: string
+    accessToken?: string
+    isAdmin?: boolean
   }
 }

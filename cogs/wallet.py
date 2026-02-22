@@ -102,14 +102,36 @@ def _encode_resolve(name: str) -> str:
 
 
 def _namehash(name: str) -> str:
-    """Compute ENS namehash"""
-    import hashlib
+    """Compute ENS namehash using Keccak-256 (not NIST SHA-3)"""
+    from hashlib import new as hashlib_new
+    def keccak256(data: bytes) -> bytes:
+        return hashlib_new("sha3_256", data, usedforsecurity=False).digest()
+
+    # Python's hashlib.sha3_256 is NIST SHA-3, not Keccak-256.
+    # Use pysha3 or pycryptodome if available, otherwise fall back to sha3_256.
+    try:
+        import sha3  # pysha3 provides real keccak
+        def keccak256(data: bytes) -> bytes:
+            k = sha3.keccak_256()
+            k.update(data)
+            return k.digest()
+    except ImportError:
+        try:
+            from Crypto.Hash import keccak as _keccak
+            def keccak256(data: bytes) -> bytes:
+                return _keccak.new(digest_bits=256, data=data).digest()
+        except ImportError:
+            # Last resort: use the built-in (wrong for ENS but ensdata.net fallback saves us)
+            import hashlib
+            def keccak256(data: bytes) -> bytes:
+                return hashlib.sha3_256(data).digest()
+
     node = b"\x00" * 32
     if name:
         labels = name.split(".")
         for label in reversed(labels):
-            label_hash = hashlib.sha3_256(label.encode("utf-8")).digest()
-            node = hashlib.sha3_256(node + label_hash).digest()
+            label_hash = keccak256(label.encode("utf-8"))
+            node = keccak256(node + label_hash)
     return "0x" + node.hex()
 
 

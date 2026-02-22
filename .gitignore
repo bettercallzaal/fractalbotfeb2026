@@ -49,3 +49,11 @@ logs/
 # OS specific
 .DS_Store
 Thumbs.db
+
+# Build artifacts
+web/.next/
+web/tsconfig.tsbuildinfo
+web/next-env.d.ts
+
+# Archives
+*.zip

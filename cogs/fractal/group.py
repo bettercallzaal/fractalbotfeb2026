@@ -168,6 +168,11 @@ class FractalGroup:
 
     async def process_vote(self, voter: discord.Member, candidate: discord.Member):
         """Process a vote and announce it publicly"""
+        # Block votes while fractal is paused
+        if getattr(self, 'paused', False):
+            await self.thread.send(f"⏸️ Voting is paused. {voter.mention}, please wait for the facilitator to resume.")
+            return
+
         previous_vote = self.votes.get(voter.id)
         previous_candidate = None
 

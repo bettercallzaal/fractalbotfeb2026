@@ -1,8 +1,10 @@
 import NextAuth from 'next-auth';
+import type { NextAuthOptions } from 'next-auth';
 import DiscordProvider from 'next-auth/providers/discord';
 import { db } from '../../../utils/database';
 import { users } from '../../../utils/schema';
 import { eq } from 'drizzle-orm';
+import { isSupremeAdmin } from '../../../utils/admin';
 
 interface DiscordProfile {
   id: string;
@@ -22,14 +24,14 @@ if (!process.env.NEXTAUTH_SECRET) {
   console.error('NEXTAUTH_SECRET is not set');
 }
 
-export default NextAuth({
+export const authOptions: NextAuthOptions = {
   providers: [
     DiscordProvider({
       clientId: process.env.DISCORD_CLIENT_ID!,
       clientSecret: process.env.DISCORD_CLIENT_SECRET!,
       authorization: {
         params: {
-          scope: 'identify email guilds',
+          scope: 'identify email guilds guilds.members.read',
         },
       },
     }),
@@ -91,12 +93,21 @@ export default NextAuth({
           session.user.totalWins = userData[0].totalWins ?? 0;
         }
       }
+      if (session.user) {
+        session.user.isAdmin = token.isAdmin ?? false;
+        session.user.accessToken = token.accessToken as string | undefined;
+      }
       return session;
     },
     async jwt({ token, account, profile }) {
       if (account && profile) {
         const discordProfile = profile as DiscordProfile;
         token.discordId = discordProfile.id;
+        token.accessToken = account.access_token;
+        // Check admin role at sign-in
+        if (account.access_token) {
+          token.isAdmin = await isSupremeAdmin(account.access_token);
+        }
       }
       return token;
     },
@@ -108,4 +119,6 @@ export default NextAuth({
   session: {
     strategy: 'jwt',
   },
-});
+};
+
+export default NextAuth(authOptions);
