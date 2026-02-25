@@ -595,7 +595,7 @@ class ProposalsCog(BaseCog):
         self.store = ProposalStore()
 
     async def cog_load(self):
-        """Re-register persistent views for active proposals on bot restart"""
+        """Re-register persistent views and re-edit messages to update button custom_ids"""
         for proposal in self.store.get_active():
             pid = proposal['id']
             if proposal['type'] == 'governance' and proposal.get('options'):
@@ -603,6 +603,17 @@ class ProposalsCog(BaseCog):
             else:
                 view = ProposalVoteView(self.store, pid, bot=self.bot)
             self.bot.add_view(view, message_id=int(proposal['message_id']))
+
+            # Re-edit the message to update buttons with new custom_ids
+            try:
+                thread = self.bot.get_channel(int(proposal['thread_id']))
+                if thread:
+                    msg = await thread.fetch_message(int(proposal['message_id']))
+                    embed = _build_proposal_embed(proposal, self.store)
+                    await msg.edit(embed=embed, view=view)
+                    self.logger.info(f"Updated buttons for proposal #{pid}")
+            except Exception as e:
+                self.logger.error(f"Failed to update proposal #{pid} buttons: {e}")
         self._expire_proposals.start()
 
     def cog_unload(self):
