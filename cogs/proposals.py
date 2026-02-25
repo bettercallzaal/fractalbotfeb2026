@@ -4,6 +4,7 @@ from discord.ext import commands, tasks
 import json
 import os
 import re
+import html
 import logging
 import time
 import aiohttp
@@ -133,7 +134,7 @@ async def _scrape_og_tags(url: str) -> dict:
                             html, re.IGNORECASE
                         )
                     if match:
-                        result[tag] = match.group(1)
+                        result[tag] = html.unescape(match.group(1))
     except Exception:
         pass
     return result
@@ -291,7 +292,24 @@ def _build_tally_text(store: ProposalStore, proposal_id: str) -> str:
             )
 
     header = f"**Vote Tally** ({total_voters} voter{'s' if total_voters != 1 else ''} \u2022 {total_weight:,.0f} Respect)"
-    return header + "\n" + "\n".join(lines)
+
+    # Individual voter breakdown for transparency
+    proposal = store.get(proposal_id)
+    voter_lines = []
+    if proposal and proposal.get('votes'):
+        for user_id, vote_data in proposal['votes'].items():
+            if isinstance(vote_data, str):
+                value, weight = vote_data, 1.0
+            else:
+                value = vote_data['value']
+                weight = vote_data.get('weight', 1.0)
+            emoji = vote_emojis.get(value, '\U0001f539')
+            voter_lines.append(f"{emoji} <@{user_id}> \u2014 **{value.capitalize()}** ({weight:,.0f} Respect)")
+
+    result = header + "\n" + "\n".join(lines)
+    if voter_lines:
+        result += "\n\n**Votes Cast:**\n" + "\n".join(voter_lines)
+    return result
 
 
 def _build_proposal_embed(proposal: dict, store: ProposalStore, author_mention: str = None) -> discord.Embed:
