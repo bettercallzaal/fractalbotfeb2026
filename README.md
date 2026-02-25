@@ -109,7 +109,11 @@ Community proposals and project curation with threaded discussion and Respect-we
 - **7-day auto-expiry** — Proposals automatically close after 7 days with final results posted to the thread
 - **Live vote tallies** — Proposal embeds auto-update after each vote with progress bars showing weighted results
 - **Proposals channel index** — Pinned active proposals list auto-updates on create/close
-- **Persistent votes** — Voting buttons survive bot restarts
+- **Transparent voting** — Each proposal embed shows every voter's name, choice, and Respect weight
+- **Public vote confirmations** — When someone votes, a public message is posted to the proposal thread with vote details and time remaining
+- **Voting window** — Embeds show creation date, closing date, and dynamic time remaining (e.g. "4d 12h remaining")
+- **Persistent votes** — Voting buttons survive bot restarts (per-proposal button IDs, auto-migrated on startup)
+- **Vote changes** — Members can change their vote at any time while the proposal is active
 - **Respect-weighted** — Vote power = your total onchain Respect (OG + ZOR). Must hold Respect tokens and have a registered wallet to vote.
 - **Admin controls** — Close voting to post final results, or delete proposals entirely
 
@@ -357,9 +361,22 @@ npm run dev
 - 48 total slash commands (up from ~30)
 - Production deployment on Bot-Hosting.net
 
+## v1.2 Changelog
+
+### Proposal Voting Fixes
+- **Fix "Interaction failed" on proposals** — Vote buttons used a shared `custom_id` across all proposals, so after a bot restart only the last-registered proposal worked. Now each proposal gets unique button IDs (`proposal_yes_1`, `proposal_no_2`, etc.)
+- **Auto-migrate buttons on startup** — On boot, the bot waits until connected then re-edits every active proposal message with updated buttons, so existing proposals work without resubmitting
+- **Fix HTML entities in scraped titles** — OG-scraped project names (e.g. `&quot;Profundo&quot;`) are now properly decoded
+
+### Transparency & UX
+- **Voter breakdown on embeds** — Every proposal embed now shows a "Votes Cast" section listing each voter by name, their choice, and Respect weight
+- **Public vote confirmations** — After each vote, a public message is posted to the proposal thread: "Vote accepted from @user (3,364 Respect) — 4d 12h remaining"
+- **Voting window timestamps** — Proposal embeds show when voting opened, when it closes, and dynamic time remaining (e.g. "4d 12h remaining")
+- **Time remaining on listings** — `/proposals` command and the proposals channel index now show time remaining per proposal
+
 ## Roadmap / Ideas
 
-### Scaling (v1.2)
+### Scaling (v1.3)
 - [ ] **Paginated proposals** — Split pinned index and `/proposals` command across pages for 10-15+ proposals
 - [ ] **Proposal filtering** — Filter by type (text/governance/funding/curate) and status (active/closed)
 - [ ] **Auto-archive** — Move closed proposals to archive after 14 days
