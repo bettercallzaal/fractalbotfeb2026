@@ -330,6 +330,24 @@ def _build_proposal_embed(proposal: dict, store: ProposalStore, author_mention: 
     tally = _build_tally_text(store, proposal['id'])
     embed.add_field(name="\u200b", value=tally, inline=False)
 
+    # Date info
+    created = datetime.fromisoformat(proposal['created_at'])
+    expires = created + timedelta(days=7)
+    time_left = _time_remaining_text(proposal)
+    status_label = proposal.get('status', 'active').capitalize()
+    if proposal.get('status') == 'active':
+        embed.add_field(
+            name="\u23f0 Voting Window",
+            value=f"Opened: <t:{int(created.timestamp())}:R>\nCloses: <t:{int(expires.timestamp())}:f> ({time_left})",
+            inline=False
+        )
+    else:
+        embed.add_field(
+            name="\U0001f512 Status",
+            value=f"**{status_label}** \u2014 voting ended <t:{int(expires.timestamp())}:R>",
+            inline=False
+        )
+
     embed.set_footer(text="Vote with your Respect \u2022 ZAO Fractal \u2022 zao.frapps.xyz")
     return embed
 
@@ -347,8 +365,30 @@ async def _update_proposal_embed(bot, store: ProposalStore, proposal: dict):
         logging.getLogger('bot').error(f"Failed to update proposal embed: {e}")
 
 
+def _time_remaining_text(proposal: dict) -> str:
+    """Return human-readable time remaining for a proposal (7-day window)"""
+    created = datetime.fromisoformat(proposal['created_at'])
+    expires = created + timedelta(days=7)
+    now = datetime.utcnow()
+    remaining = expires - now
+    if remaining.total_seconds() <= 0:
+        return "Voting closed"
+    days = remaining.days
+    hours = remaining.seconds // 3600
+    if days > 0:
+        return f"{days}d {hours}h remaining"
+    if hours > 0:
+        return f"{hours}h remaining"
+    minutes = remaining.seconds // 60
+    return f"{minutes}m remaining"
+
+
 class ProposalVoteView(discord.ui.View):
-    """Yes/No/Abstain voting buttons for text, funding, and curate proposals"""
+    """Yes/No/Abstain voting buttons for text, funding, and curate proposals.
+
+    Uses per-proposal custom_id so each proposal's buttons are unique and
+    survive bot restarts without colliding.
+    """
 
     def __init__(self, store: ProposalStore, proposal_id: str, bot=None):
         super().__init__(timeout=None)
@@ -356,17 +396,32 @@ class ProposalVoteView(discord.ui.View):
         self.proposal_id = proposal_id
         self.bot = bot
 
-    @discord.ui.button(label="Yes", style=discord.ButtonStyle.success, custom_id="proposal_yes")
-    async def vote_yes(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_vote(interaction, "yes")
+        # Dynamic buttons with unique custom_id per proposal
+        yes_btn = discord.ui.Button(
+            label="Yes", style=discord.ButtonStyle.success,
+            custom_id=f"proposal_yes_{proposal_id}"
+        )
+        no_btn = discord.ui.Button(
+            label="No", style=discord.ButtonStyle.danger,
+            custom_id=f"proposal_no_{proposal_id}"
+        )
+        abstain_btn = discord.ui.Button(
+            label="Abstain", style=discord.ButtonStyle.secondary,
+            custom_id=f"proposal_abstain_{proposal_id}"
+        )
 
-    @discord.ui.button(label="No", style=discord.ButtonStyle.danger, custom_id="proposal_no")
-    async def vote_no(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_vote(interaction, "no")
+        yes_btn.callback = self._make_callback("yes")
+        no_btn.callback = self._make_callback("no")
+        abstain_btn.callback = self._make_callback("abstain")
 
-    @discord.ui.button(label="Abstain", style=discord.ButtonStyle.secondary, custom_id="proposal_abstain")
-    async def vote_abstain(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await self._handle_vote(interaction, "abstain")
+        self.add_item(yes_btn)
+        self.add_item(no_btn)
+        self.add_item(abstain_btn)
+
+    def _make_callback(self, value: str):
+        async def callback(interaction: discord.Interaction):
+            await self._handle_vote(interaction, value)
+        return callback
 
     async def _handle_vote(self, interaction: discord.Interaction, value: str):
         await interaction.response.defer(ephemeral=True)
@@ -392,6 +447,14 @@ class ProposalVoteView(discord.ui.View):
             proposal = self.store.get(self.proposal_id)
             if proposal:
                 await _update_proposal_embed(bot, self.store, proposal)
+                # Public confirmation in the thread
+                time_left = _time_remaining_text(proposal)
+                thread = bot.get_channel(int(proposal['thread_id']))
+                if thread:
+                    await thread.send(
+                        f"\u2705 **Vote accepted** from {interaction.user.mention} "
+                        f"({weight:,.0f} Respect) \u2014 {time_left}"
+                    )
         else:
             await interaction.followup.send(
                 "This proposal is no longer accepting votes.", ephemeral=True
@@ -456,6 +519,14 @@ class GovernanceVoteView(discord.ui.View):
                 proposal = self.store.get(self.proposal_id)
                 if proposal:
                     await _update_proposal_embed(bot, self.store, proposal)
+                    # Public confirmation in the thread
+                    time_left = _time_remaining_text(proposal)
+                    thread = bot.get_channel(int(proposal['thread_id']))
+                    if thread:
+                        await thread.send(
+                            f"\u2705 **Vote accepted** from {interaction.user.mention} "
+                            f"({weight:,.0f} Respect) \u2014 {time_left}"
+                        )
             else:
                 await interaction.followup.send(
                     "This proposal is no longer accepting votes.", ephemeral=True
@@ -591,10 +662,11 @@ class ProposalsCog(BaseCog):
                 summary = self.store.get_vote_summary(p['id'])
                 total_respect = sum(s['weight'] for s in summary.values()) if summary else 0
 
+                time_left = _time_remaining_text(p)
                 lines.append(
                     f"{emoji} **#{p['id']} \u2014 {p['title']}**\n"
                     f"\u2003\u2003{voter_count} voter{'s' if voter_count != 1 else ''} \u2022 "
-                    f"{total_respect:,.0f} Respect \u2022 <#{p['thread_id']}>"
+                    f"{total_respect:,.0f} Respect \u2022 {time_left} \u2022 <#{p['thread_id']}>"
                 )
             embed.description = "\n\n".join(lines)
         else:
@@ -815,9 +887,10 @@ class ProposalsCog(BaseCog):
             summary = self.store.get_vote_summary(p['id'])
             total_voters = sum(s['count'] for s in summary.values()) if summary else 0
             total_respect = sum(s['weight'] for s in summary.values()) if summary else 0
+            time_left = _time_remaining_text(p)
             embed.add_field(
                 name=f"{emoji} #{p['id']} \u2014 {p['title']}",
-                value=f"{total_voters} voters \u2022 {total_respect:,.0f} Respect \u2022 <#{p['thread_id']}>",
+                value=f"{total_voters} voters \u2022 {total_respect:,.0f} Respect \u2022 {time_left}\n<#{p['thread_id']}>",
                 inline=False
             )
 
