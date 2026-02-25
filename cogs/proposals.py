@@ -595,7 +595,7 @@ class ProposalsCog(BaseCog):
         self.store = ProposalStore()
 
     async def cog_load(self):
-        """Re-register persistent views and re-edit messages to update button custom_ids"""
+        """Re-register persistent views for active proposals"""
         for proposal in self.store.get_active():
             pid = proposal['id']
             if proposal['type'] == 'governance' and proposal.get('options'):
@@ -603,21 +603,36 @@ class ProposalsCog(BaseCog):
             else:
                 view = ProposalVoteView(self.store, pid, bot=self.bot)
             self.bot.add_view(view, message_id=int(proposal['message_id']))
+        self._expire_proposals.start()
+        self._migrate_buttons.start()
 
-            # Re-edit the message to update buttons with new custom_ids
+    @tasks.loop(count=1)
+    async def _migrate_buttons(self):
+        """Re-edit all active proposal messages to update button custom_ids (runs once after ready)"""
+        for proposal in self.store.get_active():
+            pid = proposal['id']
+            if proposal['type'] == 'governance' and proposal.get('options'):
+                view = GovernanceVoteView(self.store, pid, proposal['options'], bot=self.bot)
+            else:
+                view = ProposalVoteView(self.store, pid, bot=self.bot)
             try:
                 thread = self.bot.get_channel(int(proposal['thread_id']))
-                if thread:
-                    msg = await thread.fetch_message(int(proposal['message_id']))
-                    embed = _build_proposal_embed(proposal, self.store)
-                    await msg.edit(embed=embed, view=view)
-                    self.logger.info(f"Updated buttons for proposal #{pid}")
+                if not thread:
+                    thread = await self.bot.fetch_channel(int(proposal['thread_id']))
+                msg = await thread.fetch_message(int(proposal['message_id']))
+                embed = _build_proposal_embed(proposal, self.store)
+                await msg.edit(embed=embed, view=view)
+                self.logger.info(f"Migrated buttons for proposal #{pid}")
             except Exception as e:
-                self.logger.error(f"Failed to update proposal #{pid} buttons: {e}")
-        self._expire_proposals.start()
+                self.logger.error(f"Failed to migrate proposal #{pid} buttons: {e}")
+
+    @_migrate_buttons.before_loop
+    async def _before_migrate(self):
+        await self.bot.wait_until_ready()
 
     def cog_unload(self):
         self._expire_proposals.cancel()
+        self._migrate_buttons.cancel()
 
     @tasks.loop(hours=1)
     async def _expire_proposals(self):
