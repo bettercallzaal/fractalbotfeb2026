@@ -165,9 +165,7 @@ class FractalGroup:
             if voice_client.is_playing():
                 voice_client.stop()
 
-            source = discord.FFmpegPCMAudio(
-                PING_SOUND, executable='/opt/homebrew/bin/ffmpeg'
-            )
+            source = discord.FFmpegPCMAudio(PING_SOUND)
             voice_client.play(
                 source,
                 after=lambda e: asyncio.run_coroutine_threadsafe(

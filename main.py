@@ -6,7 +6,10 @@ from discord.ext import commands
 from dotenv import load_dotenv
 
 # Load opus for voice support
-discord.opus.load_opus('/opt/homebrew/lib/libopus.dylib')
+if os.path.exists('/opt/homebrew/lib/libopus.dylib'):
+    discord.opus.load_opus('/opt/homebrew/lib/libopus.dylib')  # macOS (Homebrew)
+elif not discord.opus.is_loaded():
+    discord.opus.load_opus('libopus.so.0')  # Linux
 
 # Load configuration
 load_dotenv()
