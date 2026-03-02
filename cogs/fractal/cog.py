@@ -64,22 +64,39 @@ class FractalCog(BaseCog):
             return
 
         members = voice_check['members']
-        member_mentions = ", ".join([member.mention for member in members])
 
         # Store custom name for use in confirmation view
         custom_name = name
 
+        # Check wallet status for each member
+        registry = getattr(self.bot, 'wallet_registry', None)
+        with_wallet = []
+        without_wallet = []
+        for member in members:
+            if registry and registry.lookup(member):
+                with_wallet.append(member)
+            else:
+                without_wallet.append(member)
+
+        # Build confirmation message with wallet status
+        lines = [f"**Start fractal{f' ({custom_name})' if custom_name else ''}?**\n"]
+        for member in with_wallet:
+            lines.append(f"✅ {member.mention}")
+        for member in without_wallet:
+            lines.append(f"❌ {member.mention} — no wallet")
+
+        if without_wallet:
+            lines.append(f"\n⚠️ **{len(without_wallet)}** member(s) have no wallet. They should `/register` before results are submitted onchain.")
+
+        confirm_msg = "\n".join(lines)
+
         # Send member confirmation
         view = MemberConfirmationView(self, members, interaction.user, custom_name=custom_name)
         try:
-            await interaction.followup.send(
-                f"**Start fractal{f' ({custom_name})' if custom_name else ''} with:** {member_mentions}?",
-                view=view,
-                ephemeral=True
-            )
+            await interaction.followup.send(confirm_msg, view=view, ephemeral=True)
         except:
             await interaction.channel.send(
-                f"{interaction.user.mention} **Start fractal with:** {member_mentions}?",
+                f"{interaction.user.mention} {confirm_msg}",
                 view=view
             )
 
