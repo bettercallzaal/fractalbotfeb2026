@@ -421,47 +421,170 @@ class WalletCog(commands.Cog):
 
     @app_commands.command(
         name="admin_match_all",
-        description="[ADMIN] Auto-match all server members to wallets by name"
+        description="[ADMIN] Auto-match all server members to wallets — saves full report to file"
     )
     async def admin_match_all(self, interaction: discord.Interaction):
-        """Admin: try to match all guild members to wallets"""
+        """Admin: match all guild members to wallets, send full report as file"""
         await interaction.response.defer(ephemeral=True)
 
         if not self.is_supreme_admin(interaction.user):
             await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
             return
 
-        matched = []
-        unmatched = []
+        matched_by_id = []      # Already linked via /register
+        matched_by_name = []    # Matched via name lookup
+        unmatched = []          # No wallet found
+
+        # Also build data for JSON export
+        report_data = {"by_discord_id": [], "by_name_match": [], "no_wallet": []}
 
         for member in interaction.guild.members:
             if member.bot:
                 continue
-            wallet = self.registry.lookup(member)
-            if wallet:
-                short = f"{wallet[:6]}...{wallet[-4:]}"
-                matched.append(f"✅ {member.display_name}: `{short}`")
+
+            # Check Discord ID match first (from /register)
+            id_wallet = self.registry.get_by_discord_id(member.id)
+            if id_wallet:
+                short = f"{id_wallet[:6]}...{id_wallet[-4:]}"
+                matched_by_id.append(f"[ID]  {member.display_name:<30} ({member.name:<25}) -> {short}")
+                report_data["by_discord_id"].append({
+                    "discord_id": str(member.id),
+                    "display_name": member.display_name,
+                    "username": member.name,
+                    "wallet": id_wallet
+                })
+                continue
+
+            # Check name match (display_name, username, global_name)
+            name_wallet = self.registry.get_by_name(member.display_name) or \
+                          self.registry.get_by_name(member.name) or \
+                          (self.registry.get_by_name(member.global_name) if member.global_name else None)
+            if name_wallet:
+                short = f"{name_wallet[:6]}...{name_wallet[-4:]}"
+                matched_name = member.display_name
+                if not self.registry.get_by_name(member.display_name):
+                    matched_name = member.name if self.registry.get_by_name(member.name) else member.global_name
+                matched_by_name.append(f"[NAME] {member.display_name:<30} ({member.name:<25}) -> {short}  (matched: \"{matched_name}\")")
+                report_data["by_name_match"].append({
+                    "discord_id": str(member.id),
+                    "display_name": member.display_name,
+                    "username": member.name,
+                    "global_name": member.global_name,
+                    "matched_via": matched_name,
+                    "wallet": name_wallet
+                })
             else:
-                unmatched.append(f"❌ {member.display_name} ({member.name})")
+                unmatched.append(f"[NONE] {member.display_name:<30} ({member.name:<25})  global: {member.global_name or 'n/a'}")
+                report_data["no_wallet"].append({
+                    "discord_id": str(member.id),
+                    "display_name": member.display_name,
+                    "username": member.name,
+                    "global_name": member.global_name
+                })
 
-        msg = f"# 🔍 Auto-Match Results\n\n"
-        msg += f"**Matched: {len(matched)}** | **Unmatched: {len(unmatched)}**\n\n"
+        # Save JSON report to data/
+        report_path = os.path.join(DATA_DIR, 'wallet_match_report.json')
+        with open(report_path, 'w') as f:
+            json.dump(report_data, f, indent=2)
 
-        if matched:
-            msg += "**Matched:**\n"
-            for m in matched[:30]:
-                msg += f"{m}\n"
-            if len(matched) > 30:
-                msg += f"... +{len(matched) - 30} more\n"
+        # Build full text report
+        lines = []
+        lines.append("=" * 100)
+        lines.append("WALLET MATCH REPORT")
+        lines.append(f"Server: {interaction.guild.name}")
+        lines.append(f"Total members: {len(matched_by_id) + len(matched_by_name) + len(unmatched)}")
+        lines.append(f"By Discord ID: {len(matched_by_id)}  |  By Name: {len(matched_by_name)}  |  No Match: {len(unmatched)}")
+        lines.append("=" * 100)
 
-        if unmatched:
-            msg += f"\n**No wallet found:**\n"
-            for u in unmatched[:20]:
-                msg += f"{u}\n"
-            if len(unmatched) > 20:
-                msg += f"... +{len(unmatched) - 20} more\n"
+        lines.append("")
+        lines.append(f"--- LINKED VIA /register ({len(matched_by_id)}) - PERMANENT ---")
+        for m in matched_by_id:
+            lines.append(m)
 
-        # Truncate if too long for Discord
+        lines.append("")
+        lines.append(f"--- MATCHED BY NAME ({len(matched_by_name)}) - FRAGILE (run /admin_lock_wallets to make permanent) ---")
+        for m in matched_by_name:
+            lines.append(m)
+
+        lines.append("")
+        lines.append(f"--- NO WALLET FOUND ({len(unmatched)}) - Need /register or manual link ---")
+        for u in unmatched:
+            lines.append(u)
+
+        full_report = "\n".join(lines)
+
+        # Save text report too
+        txt_path = os.path.join(DATA_DIR, 'wallet_match_report.txt')
+        with open(txt_path, 'w') as f:
+            f.write(full_report)
+
+        # Send as file attachment + summary
+        import io
+        file_buffer = io.BytesIO(full_report.encode('utf-8'))
+        file = discord.File(file_buffer, filename="wallet_match_report.txt")
+
+        summary = (
+            f"# Wallet Match Report\n\n"
+            f"**By Discord ID (permanent):** {len(matched_by_id)}\n"
+            f"**By Name (fragile):** {len(matched_by_name)}\n"
+            f"**No Match:** {len(unmatched)}\n\n"
+            f"Full report attached below + saved to `data/wallet_match_report.txt` and `data/wallet_match_report.json`"
+        )
+
+        await interaction.followup.send(summary, file=file, ephemeral=True)
+
+    @app_commands.command(
+        name="admin_lock_wallets",
+        description="[ADMIN] Lock all name-matched wallets to Discord IDs (makes them permanent)"
+    )
+    async def admin_lock_wallets(self, interaction: discord.Interaction):
+        """Admin: convert all name-matched wallets into permanent Discord ID links"""
+        await interaction.response.defer(ephemeral=True)
+
+        if not self.is_supreme_admin(interaction.user):
+            await interaction.followup.send("❌ You need the **Supreme Admin** role to use this command.", ephemeral=True)
+            return
+
+        locked = []
+        already_linked = 0
+        skipped_empty = 0
+
+        for member in interaction.guild.members:
+            if member.bot:
+                continue
+
+            # Skip if already linked by Discord ID
+            if self.registry.get_by_discord_id(member.id):
+                already_linked += 1
+                continue
+
+            # Try name match
+            wallet = self.registry.get_by_name(member.display_name) or \
+                     self.registry.get_by_name(member.name) or \
+                     (self.registry.get_by_name(member.global_name) if member.global_name else None)
+
+            if wallet:
+                # Found a name match with a real wallet — lock it to their Discord ID
+                self.registry.register(member.id, wallet)
+                short = f"{wallet[:6]}...{wallet[-4:]}"
+                locked.append(f"✅ **{member.display_name}** → `{short}`")
+            elif wallet == "":
+                skipped_empty += 1
+
+        msg = f"# 🔒 Wallet Lock Results\n\n"
+        msg += f"**Newly locked:** {len(locked)}\n"
+        msg += f"**Already linked:** {already_linked}\n"
+        msg += f"**Skipped (no wallet):** {skipped_empty}\n\n"
+
+        if locked:
+            msg += "**Locked to Discord ID:**\n"
+            for l in locked[:30]:
+                msg += f"{l}\n"
+            if len(locked) > 30:
+                msg += f"... +{len(locked) - 30} more\n"
+
+        msg += f"\nThese {len(locked)} members now have permanent Discord ID → wallet links that won't break if they change their display name."
+
         if len(msg) > 1900:
             msg = msg[:1900] + "\n... (truncated)"
 
